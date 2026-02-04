@@ -1,0 +1,41 @@
+\section{Preliminaries and Related Work}
+\subsection{Multimodal Large Language Models}
+\begin{figure}[h]
+    \centering    
+    \includegraphics[width=0.6\linewidth]{figures/MLLM_archi.pdf}
+    \vspace{-2.9mm}
+    \caption{MLLM's architecture.} 
+    \label{fig:mllms}
+\vspace{-3mm}
+\end{figure}
+
+As shown in the Fig.~\ref{fig:mllms}, the existing MLLMs framework ~\citep{qwenvl,chen2024internvl} mainly consists of three modules: \textbf{(1)} \textbf{Visual encoder $\mE$} for processing visual inputs, \textbf{(2)} \textbf{Vision-language projector $\mP$} for aligning the text and visual modalities, \textbf{(3)} \textbf{Large language model $LLM$} that handles the multi-modal tokens and performs reasoning. 
+\paragraph{Vision Encoder.} Taking the input image or video $\mX_v$ as input and compressing the original vision information into more compact patch features $\mF_v$. This process typically utilizes a Vision Transformer (ViT) ~\citep{vit}, such as CLIP~\citep{radford2021clip} and OpenCLIP~\citep{openclip}. It can be formulated as: $\mF_v = E(\mX_v)$.
+\paragraph{Vision-Language Projector.} The task of the vision-language projector $\mP$ is to map the visual patch features $\mF_v$ into the textual feature space: $\mE_v = P(\mF_v)$.
+\paragraph{Large Language Model.} The pre-trained large language model is the core component of MLLMs, endowing the framework with exceptional capabilities, such as zero-shot generalization, instruction following, and in-context learning. Typically, a text tokenizer is integrated with the LLM, mapping text prompts $\mX_t$ to the text tokens $\mE_t$. The text tokens $\mE_t$ and the visual tokens $\mE_v$ are then concatenated to form the input for MLLMs, which outputs the final response sequence $\mO_a$ in an autoregressive manner:
+\vspace{-3mm}
+\begin{equation}
+            {LLM}(\mO_a|\mE_v,\mE_t)=\prod^l_{i=1}{LLM}(y_i|\mE_v,\mE_t,y_{<i})
+\vspace{-1mm}
+\label{eq1}
+\end{equation}
+where $l$ denotes the length of $\mO_a$. The parameter sizes of large language models (LLMs) range from 3 billion to tens of billions. Commonly used open-source LLMs include the Llama series~\citep{touvron2023llama,llama2}, Qwen~\citep{qwen}, InternLM~\citep{internlm}, MiniCPM~\citep{hu2024minicpm}, ChatGLM~\citep{chatglm}. 
+
+MLLMs’ foundational components have greatly benefited from rapid advancements in LLM technology. Flamingo~\citep{alayrac2022flamingo} pioneered connecting pre-trained visual encoders to LLMs, demonstrating strong generalization across visual-language tasks. Following ChatGPT~\citep{achiam2023gpt}, numerous open-source models based on pre-trained LLMs, such as LLaMA series~\citep{touvron2023llama, llama2, llama3}, have been proposed~\citep{li2023blip2, huang2023kosmos1, zhu2023minigpt, liu2023llava}. Subsequent efforts, including Qwen-VL~\citep{qwenvl}, InternVL~\citep{chen2024internvl}, and CogVLMV2~\citep{CogVLM2}, have enhanced MLLMs by improving high-resolution inputs and scaling training data. Besides, smaller MLLMs like Mini-Gemini~\citep{li2024minigemini}, MobileVLM~\citep{chu2024mobilevlm2}, and MiniCPM-V~\citep{yao2024minicpmv} have emerged. Despite those advancements, the large parameter sizes of MLLMs lead to high computational costs, yet dedicated quantization methods to reduce memory usage and accelerate inference still remain underexplored.
+
+
+
+\vspace{-3mm}
+\subsection{PTQ for LLMs/MLLMs}
+
+PTQ~\citep{zhou2024lidar, jiang2024ptq4ris, yu2025q} serves as a potential strategy for model compression. By
+converting the high-precision variables of pre-trained models into low-bit integers, it achieves memory reduction and inference speed acceleration. For uniform quantization, given a floating-point (FP) tensor $x$ (weights or activations), it can be uniformly quantized to $b$-bits in signed quantization as follows:
+\vspace{-1mm}
+\begin{align}\label{eq:quant}
+    \hat{\mathbf{x}} = \mathbf{Q}_U(\mathbf{x},b) =(clamp(\lfloor \frac{\mathbf{x}}{s} \rceil+z, q_{min}, q_{max}) - z) \cdot s
+    % x_{int} = clamp(\lfloor \frac{x}{s} \rceil+z,q_{min},q_{max}),
+% \vspace{-2mm}
+\end{align} 
+where $s=\frac{\max(|\mathbf{x}|)}{2^{b-1}-1}$ is the scale factor, $\lfloor \cdot \rceil$ is the rounding-to-nearest operator, and the function $clamp(\cdot)$ clips values outside the integer range $\left[q_{min}, q_{max} \right]$. $z$ is zero-point. $s$ denotes the quantization scale factor, which reflects the proportional relationship between FP values and integers. $\left[q_{min}, q_{max} \right]$ is the quantization range determined by the bit-width $b$. Generally, when we quantize the network's weight with 4-bit and activations with 8-bit, called it as W4A8. We can calculate $s$ offline using the activations from calibration samples, known as \textbf{static quantization}. We can also use the runtime statistics of activations to get $s$, referred to as \textbf{dynamic quantization}.  More details are in Appendix A. 12. %\ref{quant_granularity}.
+
+Existing post-training quantization (PTQ) methods for LLMs are categorized into weight-only and weight-activation quantization~\citep{yuan2024llm,li2023fptq,li2024norm,yue2024wkvquant,hu2024llm,hu2025ostquant,chenmoequant,xumambaquant,yuerwkvquant}. Weight-only methods like GPTQ~\citep{frantar2022gptq}, QuIP~\citep{chee2024quip}, and AWQ~\citep{lin2023awq} achieve high compression rates but offer limited inference acceleration. In contrast, weight-activation quantization methods~\citep{xiao2022smoothquant, wei2022outlier, yuan2023asvd, zhang2024qqq} quantize both weights and activations, improving memory usage and latency. The main challenge is activation outliers causing quantization errors. Techniques like SmoothQuant~\citep{xiao2022smoothquant} shift quantization difficulty from activations to weights, while OmniQuant~\citep{2023omniquant} optimizes performance by training quantization parameters. SliceGPT~\citep{ashkboos2024slicegpt} reduces memory demands by designing a Pre-LN + Rotate Scheme for LLMs sparsification based on computational invariance. Recently, Quarot~\citep{ashkboos2024quarot} introduced applying \emph{offline} Hadamard transforms and a \emph{partially online} Hadamard transform to eliminate outliers, achieving state-of-the-art quantization results on LLMs. However, this solution is not applicable to MLLMs due to inherent modality differences. Building on the above studies, research on PTQ specifically tailored for MLLMs remains notably scarce. Existing studies, such as Q-VLM~\citep{qvlm}, propose a block-wise quantization framework that optimizes cross-layer dependencies via entropy-guided partitioning. MBQ~\citep{li2024mbq} uses gradients of the supervised fine-tuning loss with respect to vision and language tokens as sensitivity indicators to balance reconstruction loss during calibration. Despite efforts, existing methods still employ per-token dynamic quantization for activation, which inherently introduces a significant computational overhead than per-tensor static quantization discussed earlier. In contrast, our MQuant framework addresses these challenges by extending full static quantization to both weights and activations, specifically designed to unleash the inference potential of MLLMs while overcoming the modality-specific limitations faced by LLM-focused PTQ methods, which are not directly applicable to MLLMs due to significant modality differences.

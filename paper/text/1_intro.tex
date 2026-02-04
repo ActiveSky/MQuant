@@ -1,0 +1,65 @@
+\vspace{-2mm}
+\section{Introduction}
+\label{intro}
+% \vspace{-2mm}
+
+\begin{figure*}[t]
+    \centering    
+    \includegraphics[width=1.0\textwidth]{figures/Figure1_obsV2.pdf}
+    \vspace{-2.9mm}
+    \caption{(a) Prefill visual tokens counts across different MLLMs as the image splits/resolution increases. (b) The activation values of visual tokens range from $-20$ to $10$, while textual tokens concentrate near $0$ (rarely exceeding $\pm0.5$.} 
+    \label{fig:obs12}
+\vspace{-3mm}
+\end{figure*}
+Recent advances in large language models (LLMs)~\citep{brown2020language,touvron2023llama,llama2,llama3} have led
+to remarkable performance on a wide range of natural language processing tasks. However, these models often struggle
+when dealing with non-textual data such as images or videos. Multimodal large language models (MLLMs)~\citep{reid2024gemini,achiam2023gpt4,wang2023cogvlm}
+address this limitation by integrating visual and textual modalities, thereby enabling comprehensive understanding
+and reasoning. Despite these benefits, their large parameter sizes, coupled with substantial computational demands, poses
+a major challenge for real-world deployment, particularly in resource-constrained or privacy-sensitive environments.
+
+
+
+
+\textbf{Challenges in MLLMs Quantization.} Quantization has proven an effective strategy for reducing memory usage
+and inference costs in LLMs~\citep{yuan2023rptq,2023omniquant,gsq}, by converting high-precision parameters (e.g., FP32)
+into lower-bit representations (e.g., INT8). Yet, the transition from LLMs to MLLMs brings three unique difficulties: \raisebox{-0.5pt}{\ding[1.1]{182\relax}} \textbf{Time-to-First-Token (TTFT) Explosion.} MLLMs often generate large numbers of visual tokens (e.g., patch embeddings or region proposals) with the resolution and aspect ratio of input images or videos. As shown in Fig \ref{fig:obs12}(a), in models such as Qwen2-VL~\citep{Qwen2VL}, the number of prefill visual tokens grows as image resolution increases (detailed figure in Appendix A.6). As image or video resolution increases, the prefill visual tokens can escalate dramatically---leading to high TTFT and negatively impacting latency-sensitive tasks. Moreover, in higher-demand scenarios such as video-based tasks and multi-image dialogues, the accumulation of visual tokens becomes even more pronounced, further exacerbating TTFT growth. Although the commonly adopted per-token dynamic quantization~\cite{qwenvl,Qwen2VL,liu2023llava,chen2024internvl} offers flexibility to accommodate the larger activation distribution variance across different tokens in vision modal, its requirement for online token-wise scale recalculation during inference significantly amplifies this computational overhead. Moreover, recent studies~\citep{chen2024prefixquant, tan2024mobilequant} have underscored the inefficiencies of per-token dynamic quantization, especially for resource-constrained edge devices, where such methods exacerbate latency and memory pressures. \raisebox{-0.5pt}{\ding[1.1]{183\relax}} \textbf{Disparate Modality Distributions.} As shown in Fig \ref{fig:obs12} (b), the activation distributions between visual and textual tokens reveal substantial numerical discrepancies, where visual token activations can span a significantly broader range (e.g., $-20$ to $10$) than textual tokens, which typically center near $0$. A single global scale factor for both visual and textual tokens leads to either aggressive clipping of visual outliers or increased quantization granularity for text, harming overall accuracy. \raisebox{-0.5pt}{\ding[1.1]{184\relax}} \textbf{Visual Token Outliers.} High-magnitude outliers in visual tokens, often reflecting salient image regions, make traditional clipping-based methods unsuitable. As shown in Table~\ref{fig:abla_visual_txt}, naive clipping outliers significantly degrades accuracy, highlighting the necessity for judicious outlier treatment. 
+
+
+\begin{table}[h]
+\renewcommand\arraystretch{1.0} 
+\centering
+\small
+% \vspace{-2mm}
+\caption{Ablations on the clip range for different tokens.}
+\vspace{-3mm}
+\label{fig:abla_visual_txt}
+\setlength{\tabcolsep}{0.8mm}
+\scalebox{1.0}{
+\resizebox{\columnwidth}{!}{
+\begin{tabular}{cc|cc}
+\toprule
+Clip Range & Bits (W/A) & Visual Tokens & Textual Tokens \\ \midrule
+-& BF16 / BF16 & \multicolumn{2}{c}{\textbf{61.40}} \\ \midrule
+(0-1.0) & BF16 / INT16 & 61.20 (\color{myred}{$\downarrow$0.20}) & 61.25 (\color{myred}{$\downarrow$0.15})\\
+\rowcolor{myblue!20}(0-0.99999) & BF16 / INT16 & \textbf{18.92} (\textbf{\color{myred}{$\downarrow$42.48}}) & 60.09 (\color{myred}{$\downarrow$1.31}) \\
+\hline
+\end{tabular}%
+}
+}
+\vspace{-4mm}
+\end{table}
+
+To this end, we propose \emph{MQuant}, an accurate and efficient post-training quantization (PTQ) solution specifically designed for multimodal large language models (MLLMs). First, to reduce the TTFT while maintaining accuracy, we introduce \textbf{Modality-Specific Static Quantization (MSQ)}, which apply distinct static per-tensor scales for visual vs. textual tokens based on the distinct distribution differences. Second, for further acceleration, we design an \textbf{Attention-Invariant Flexible Switching (AIFS)} scheme. AIFS transforms mixed multimodal tokens into unified, modality-decoupled tokens without the need for dynamic position vectors, maintaining computational equivalence and memory efficiency by avoiding the overhead associated with dynamic processing. Based on MSQ and AIFS, MQuant
+slashes TTFT and preserves accuracy. Third, we reveal the weight outliers caused by the online Hadamard rotations through theoretical analysis and propose \textbf{Rotation Magnitude Suppression (RMS)} to mitigate them. Our theoretical analysis reveals the emergence of large mean channels in MLLM weights, and RMS effectively reduces these outliers with minimal overhead. 
+
+We evaluate \emph{MQuant} on five mainstream MLLMs, including InternVL~\citep{internvl15}, Qwen-VL~\citep{qwenvl},  MiniCPM-V~\citep{yao2024minicpmv}, CogVLM2~\citep{CogVLM2} and Qwen2-VL~\citep{Qwen2VL}. The extensive results on diverse multimodal reasoning tasks demonstrate that \emph{MQuant} achieves less than 1\% accuracy loss on all MLLMs with 23\% and 100\% speedup in prefill and decode stage under the W4A8 setting, highlighting its superior performance and wide practical value. Our main contributions are summarized as follows:
+
+\vspace{-1mm}
+\begin{itemize}
+    \item \textbf{Insightful Observation.} To our best knowledge, we present the first comprehensive analysis of quantization issues in MLLMs, revealing the root causes of performance collapse and identifying inference speed bottlenecks as well as the quantization challenges posed by modality differences. 
+    \item \textbf{MSQ and AIFS.} We design Modality-specific Static Quantization (MSQ) and Attention-Invariant Flexible Switching (AIFS) to accelerate inference for heterogeneous variable-sequence multimodal inputs while maintaining accuracy.
+    \item \textbf{RMS.} We identify weight outliers caused by online rotation, and propose Rotation Magnitude Suppression to enhance quantization performance.
+    \item \textbf{MQuant.} We propose \emph{MQuant}, a general PTQ framework designed for MLLMs, demonstrating both near-lossless performance and with significant speedup. 
+    \vspace{-2.0mm}
+\end{itemize}

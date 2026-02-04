@@ -1,0 +1,186 @@
+% \vspace{-2mm}
+\section{Method}\label{sec: method}
+
+In this section, we present \emph{MQuant}, a post-training quantization solution specifically designed for MLLMs. In Sec. \ref{UniToekn}, we describe proposed modality-specific static quantization (MSQ) and attention-invariant flexible switching (AIFS) mechanisms. In Sec. \ref{sec:fht-outlier}, we identify the weight outliers caused by the online Hadamard rotations and state Rotation Magnitude Suppression (RMS). We provide the detailed MQuant algorithm for FP MLLMs in Appendix~\ref{Mquant} Algorithm \ref{alg:MQuant}.
+
+% \vspace{-2mm}
+\subsection{Modality-Specific Static Quantization and Attention-Invariant Flexible Switching}
+\label{UniToekn}
+
+
+
+We address this issue with a two-part method:
+(1) \textbf{Modality-Specific Static Quantization (MSQ)} and
+(2) \textbf{Attention-Invariant Flexible Switching (AIFS)}. MSQ applies different static scaling factors for visual and textual tokens, while AIFS reorders their positions to avoid irregular data slicing. MSQ+AIFS retains accuracy while eliminating the expensive token-wise scale online computation during inference. This approach achieves efficiency gains by leveraging per-tensor static quantization, especially for high-resolution inputs.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.99\linewidth]{figures/AIFSV3_rebuttal.pdf}
+    \vspace{-1.5mm}
+    \caption{Overview of Modality-Specific Static Quantization (MSQ) and Attention-Invariant Flexible Switching (AIFS). AIFS reorders tokens so that all visual tokens appear first, then the textual tokens, while adjusting the causal mask to preserve the original model logic.}
+    \label{fig:AIFS}
+    \vspace{-4mm}
+\end{figure}
+
+%-------------------------------------
+\vspace{-2mm}
+\label{MSQ}
+\noindent\paragraph{\textbf{Modality-Specific Static Quantization (MSQ)}} Let $E$ be an input sequence of length $L$ that intermixes textual and visual tokens. Denote $E = \{\;e^t_1, \dots, e^t_{m-1},\, e^v_m, \dots, e^v_n,\, e^t_{n+1}, \dots, e^t_L\}$, where $m,n$ specify the visual token segment. We observe that visual tokens often have larger activation magnitudes, which can overshadow textual features. To handle these differences, we apply two distinct sets of \emph{static per-tensor} quantization parameters:  
+\begin{equation}
+\label{eq:ms-ptq}
+    E \;=\;
+    \underbrace{(e^t_1, \dots, e^t_{m-1})}_{\textstyle \text{text scale } s_{t}}
+    \;\;\underbrace{(e^v_m, \dots, e^v_n)}_{\textstyle \text{visual scale } s_{v}}
+    \;\;\underbrace{(e^t_{n+1}, \dots, e^t_L)}_{\textstyle \text{text scale } s_{t}}.
+\end{equation}
+The scaling factors $s_{v}$ and $s_{t}$ correspond to visual and textual tokens, respectively. Our innovation lies in performing \emph{single-shot calibration} of these factors before inference, thereby eliminating per-token computational overhead. This per-tensor static quantization strategy provides three distinct advantages: \textbf{(1)} complete avoidance of dynamic scale updates, \textbf{(2)} hardware-friendly implementation benefiting from simplified quantization kernels, and \textbf{(3)} prevention of distribution saturation where high-magnitude visual activations could overwhelm the narrower dynamic range of textual tokens.
+
+\vspace{-2mm}
+\label{AIFS}
+\noindent\paragraph{\textbf{Attention-Invariant Flexible Switching (AIFS)}} Despite the benefits of MSQ, it complicates data handling if textual and visual tokens remain interleaved in $E$. Na\"ive slicing and concatenating at runtime can increase memory traffic and reduce efficiency for \texttt{GEMM}-based layers like QK and FC. To overcome this, we propose \emph{Attention-Invariant Flexible Switching (AIFS)}. Figure~\ref{fig:AIFS} illustrates the idea: 
+we \emph{reorder} the sequence so that all visual tokens appear first, followed by textual tokens. We then alter the causal mask to preserve the original auto-regressive relationships. Causal attention~\citep{vaswani2017attention} ensures each token can only attend to earlier tokens. Formally, for a naive sequence $E$, the attention matrix is  
+\begin{equation}
+    \begin{aligned}
+    \mathbf{A} = \mathrm{Softmax}\!\bigl(\tfrac{\mathbf{Q}\mathbf{K}^\top}{\sqrt{D}} + M_{i,j}\bigr), 
+    \quad
+    M_{i,j} =
+    \begin{cases}
+    0, & \text{if } j \leq i,\\
+    -\infty, & \text{otherwise}.
+    \end{cases}
+    \end{aligned}
+\label{eq:casual_mask_mt}
+\end{equation}
+With AIFS mechanism, we can reorder $E$ and obtain an unified causal mask $M^u_{i,j}$, the new $E^{u} = \{\;e^v_m, \dots, e^v_n,\; e^t_1,\dots,e^t_{m-1},\, \dots, e^t_{n+1},$ $\dots, e^t_L\}$, and $M^u_{i,j}$ could be formulated as:
+
+\begin{equation}
+    \begin{aligned}
+    M^{u}_{i,j} = 
+\begin{cases} 
+0 & \text{if one of the following conditions is met:} \\
+& ( i \leq (n-m), j \leq i \text{ or } (n-m) < j \leq n) \\
+&\text{or } ((n-m)<i \leq n, (n-m) < j \leq i) \\
+&\text{or } (i > n, j \leq i) \\
+-\infty &\text{otherwise} 
+\end{cases}   
+\end{aligned}
+\label{eq:casual_unified}
+\end{equation}
+
+The position embeddings are also shifted accordingly (see Appendix~\ref{rope}), preserving \emph{numerical equivalence of attention scores} with the original sequence. This maintains auto-regressive consistency while enabling streamlined memory access: all visual/textual tokens can now be processed through respective static-scale multiplications. 
+\vspace{-2mm}
+\paragraph{\textbf{Seamless Integration with FlashAttention}} MSQ and AIFS, which optimizes MLLMs through optimizing on input token efficiency, while FlashAttention~\cite{dao2022flashattention} accelerates attention computation via reduced memory access and tiling. These approaches are conceptually orthogonal, suggesting seamless integration with additive benefits without inherent conflicts. Specifically, at the beginning of inference, MSQ+AIFS reorders the intermixed multimodal tokens and passes the original visual modality start/end indices ($m$ and $n$) to FlashAttention to ensure that irrelevant positions are correctly masked. Detailed results are in Table ~\ref{table:flash}.
+
+
+\vspace{-2mm}
+\noindent \paragraph{\textbf{Efficiency and Practical Benefits}}
+Our experiments in Section~\ref{sec:exp} show that MSQ + AIFS delivers three main advantages: \raisebox{-0.5pt}{\ding[1.1]{182\relax}} \emph{High Compatibility and Strong Theoretical Equivalence:} The causal-mask transformation ensures that the model’s output is numerically the same as if tokens were not reordered. This reordering can be integrated into existing MLLM implementations without major code changes. \raisebox{-0.5pt}{\ding[1.1]{183\relax}} \emph{Reduced Inference Latency:} We replace per-token dynamic quantization with a static per-modality approach. This removes the need to recalculate scales per token, cutting runtime overhead and boosting throughput. \raisebox{-0.5pt}{\ding[1.1]{184\relax}} \emph{Enhanced Memory Efficiency:} Sequential processing of visual (via $s_{v}$) and textual ($s_{t}$) tokens with dedicated scale factors minimizes memory fragmentation, yielding up to 24.7\% speedups and 152.9\% memory efficiency gains (Table~\ref{tab:ablation2}) through eliminated padding/slicing operations.
+
+
+In summary, \emph{MSQ + AIFS} offers a straightforward and effective way to handle the unique challenges of multi-modal token distributions. It is valuable on edge devices or other constrained platforms where dynamic quantization is hard to implement at scale, yet per-tensor static quantization is hardware-friendly and fast~\cite{2024_mobilequant}. More discussions is in Appendix~\ref{aifs_msq_pros}
+
+
+\vspace{-2mm}
+
+
+\subsection{FHT-induced Weight Outlier Mitigation: Rotation Magnitude Suppression}
+\label{sec:fht-outlier}
+
+% \paragraph{Background and Motivation.}
+QuIP ~\citep{chee2024quip} and Quip\#~\citep{tseng2024quip+} formalized \emph{incoherence} to measure the difficulty of quantization. A lower incoherence indicates a simpler quantization scenario. For a weight matrix\(W \in \mathbb{R}^{m\times n}\)  with singular vectors \(e_i\), \(e_j\) and  Frobenius norm \(\|W_{\ell_2}\|_F\). the \emph{incoherence coefficient} \(\mu\) is defined as the minimal constant satisfying:
+\begin{equation}
+\vspace{-1mm}
+\label{eq:incoherence}
+\begin{aligned}
+|W_{ij}| \;=\; \bigl|\,e_i^\top W\,e_j\bigr|\;\;\le\;\;\mu\,\frac{\|W\|_F}{\sqrt{mn}},
+\end{aligned}
+% \vspace{-1mm}
+\end{equation}
+Generally, the smaller \(\mu\) is, the easier it is to quantize \(W\). They also showed that applying a Hadamard transform to both weights and activations can effectively reduce \(\mu\). However, Multi-modal LLMs (MLLMs) combine an LLM component with a \emph{visual encoder}, which often relies on LayerNorm. Quarot’s partial online transform cannot be applied directly to all such norms. Inspired by SliceGPT~\citep{ashkboos2024slicegpt}, we convert visual encoders’ LayerNorms into RMSNorms. More
+details can be found in the Appendix \ref{pre-LN2RMSN}. This change makes Quarot-like Hadamard transforms applicable to MLLMs. Yet, as Table~\ref{table:main_results} demonstrates, Quarot still underperforms on many MLLM tasks. Quip\#~\citep{tseng2024quip+} also proved that \emph{random Hadamard transforms} (RHT) can reduce incoherence for Hessians and weights, but they did not analyze \emph{online} (fast) Hadamard transforms (FHT). In Quarot, FHT is crucial for low-bit quantization (e.g., 4-bit) as shown in Appendix ~\ref{sec:online-hadamard}. We investigate why FHT can yield fresh outliers in MLLMs and propose a method to suppress them. Besides, due to the difference of MLLMs architecture, we also discuss the rotation-based implementation details before RMS in Appendix ~\ref{section:background-norm}.
+
+\vspace{-1mm}
+\begin{figure}[ht]
+\vspace{-2mm}
+    \centering    
+    \includegraphics[width=0.99\linewidth]{figures/W_outliers.pdf}
+    \vspace{-2mm}
+    \caption{\textbf{(a)} The pipeline of Quarot, showing offline and partially online Fast Hadamard transforms. \textbf{(b)} Weight matrix where applying online FHT produces outliers in the first row.}
+    \label{quarot}
+    \vspace{-3mm}
+\end{figure}
+
+\noindent\paragraph{\textbf{Channel-Mean Outliers in Online FHT}}
+Following (Eq.~\ref{eq:incoherence}), let \(W_{\ell_2}\in\mathbb{R}^{n\times m}\) be a weight matrix. A Hadamard matrix \(H \in \{-1,1\}^{n\times n}\) with orthonormal rows preserves this norm, i.e., $\|\,H\,W_{\ell_2}\|_F \\ = \|W_{\ell_2}\|_F$. Suppose \(\mu_{\ell_2}\) is the incoherence coefficient for \(W_{\ell_2}\), satisfying 
+\(\max(|W_{\ell_2}|) = \mu_{\ell_2}\,\frac{\|W_{\ell_2}\|_F}{\sqrt{mn}}\).
+Let \(HW_{\ell_2}\) be the transformed weight, and let its incoherence coefficient be \(\mu_{H\ell_2}\). Then we have:
+\vspace{-2mm}
+\begin{align}\label{eq:scale_l2}
+\frac{\mu_{H\ell_2}}{\mu_{\ell_2}}
+\;=\;
+\frac{\max\bigl|\,H\,W_{\ell_2}\bigr|}{\max\bigl|\,W_{\ell_2}\bigr|}
+\,.
+\end{align}
+For many Hadamard transforms, the first row (and first column) contain identical \(\tfrac{1}{\sqrt{n}}\) entries, while other rows sum to zero. Hence, the first channel after transformation is
+\begin{align}
+(H W_{\ell_2})_{0j}
+\;=\;
+\sqrt{n}\,\mathrm{mean}\bigl(w_{:,j}\bigr).
+\end{align}
+If the mean is large, the first element in that row can exceed the original maximum and thus raise \(\mu_{H\ell_2}\). Concretely, when
+\begin{align}
+\label{eq:scale_l3}
+\sqrt{n}\,\mathrm{mean}\bigl(w_{:,j}\bigr) \;>\; \max_{i}\,\bigl(w_{ij}\bigr),
+\end{align}
+a new \emph{channel-mean outlier} appears in the first row. Figure~\ref{quarot}(b) shows such an occurrence in an MLLM. This issue arises especially in Quarot’s \emph{online} (partial) FHT step, which applies Hadamard rotations per forward pass rather than strictly offline. The detailed approve in Appendix ~\ref{weight_outliers}.
+
+\begin{table}[htbp]
+\vspace{-1mm}
+\caption{Compliance Ratio with Eq. 9 Across Model Components}
+\vspace{-2mm}
+\label{tab:ratio_rms}
+\centering
+\resizebox{1.0\linewidth}{!}{
+\begin{tabular}{c|cc|c|c}
+\toprule
+\multirow{2}{*}{\textbf{Model}} & \multirow{2}{*}{\textbf{Part}} & \textbf{All Blocks} & \textbf{Meet Eq. 9} & \multirow{2}{*}{\textbf{Ratio}}\\
+& &\textbf{Number} & \textbf{Number} & \\
+\midrule
+\multirow{2}{*}{\textbf{Internvl2-8B}}  & Visual & 24 & 24 & 100\% \\
+& LLM  & 32 & 4  & 12.5\% \\
+\hline
+\multirow{2}{*}{\textbf{Qwenvl-9.6B}}     & Visual & 48 & 48 & 100\% \\
+& LLM  & 32 & 13 & 40.6\% \\
+\hline
+\multirow{2}{*}{\textbf{MiniCPM-V-2.6-8B}}      & Visual & 27 & 27 & 100\% \\
+& LLM    & 28 & 3  & 10.7\% \\
+\hline
+\multirow{2}{*}{\textbf{GLM-4V-9B}}        & Visual & 63 & 63 & 100\%\\
+ & LLM   & 40 & 6  & 15.0\% \\
+\hline
+\multirow{2}{*}{\textbf{Qwen2vl-7B}}    & Visual & 32 & 32 & 100\% \\
+& LLM            & 28 & 1  & 3.5\% \\
+\bottomrule
+\end{tabular}
+}
+\vspace{-4mm}
+\end{table}
+
+\noindent\paragraph{\textbf{Prevalence of Eq.~\ref{eq:scale_l3} Compliance}} We conduct systematic block-level verification across five state-of-the-art MLLMs (InternVL2-8B, QwenVL-9.6B, MiniCPM-V-2.6-8B, GLM-4V-9B, and Qwen2VL-7B) to quantify the occurrence of Fast Hadamard Transform (FHT)-induced weight outliers. As evidenced in table ~\ref{tab:ratio_rms}, our analysis reveals two critical findings: \textbf{(1) Universal Presence in Vision Encoders}: All visual $down_{proj}$ layers (100\%) exhibit FHT-induced weight outliers that satisfy Eq.~\ref{eq:scale_l3}, as conceptually illustrated in Fig.~\ref{quarot}(b). \textbf{(2) Variable Manifestation in LLMs}: The phenomenon appears in only 3\%–40\% of LLM $down_{proj}$ layers across different architectures. This empirical validation confirms above theoretical soundness and the critical need for specialized handling of FHT-generated weight outliers, particularly in vision components where their universal presence fundamentally impacts model quantization.
+
+\noindent\paragraph{\textbf{Rotation Mitigation Scheme (RMS)}}
+To this end, we propose \emph{RMS} to handle these new outliers with minimal overhead. We first identify whether a channel meets (Eq.~\ref{eq:scale_l3}). If it does, we: \raisebox{-0.5pt}{\ding[1.1]{182\relax}} \textbf{Split} the problematic channel from the main \texttt{GEMM} kernel and process it using a separate \texttt{GEMV}. \raisebox{-0.5pt}{\ding[1.1]{183\relax}} \textbf{Zero out} that row in $HW_{\ell_2}$ so that the main kernel does not double-count it. \raisebox{-0.5pt}{\ding[1.1]{184\relax}} \textbf{Add} the partial output (from the split \texttt{GEMV}) back to the main path before the activation.
+Figure~\ref{oswq} shows the workflow. This targeted split ensures large-mean channels do not trigger extreme first-row values during the per-forward-pass FHT. The added cost is small, since only channels meeting Eq.~\ref{eq:scale_l3} require this procedure. Detailed RMS algorithm in Appendix~\ref{RMS_algo} outlines how RMS integrates with Quarot’s FHT. Overall, RMS addresses a key shortcoming of online Hadamard transforms by suppressing large-mean channels.
+
+\begin{figure}[ht]
+\vspace{-2mm}
+    \centering    
+    \includegraphics[width=\linewidth]{figures/outliers_solution.pdf}
+    \vspace{-2mm}
+    \caption{An overview of our proposed \textbf{RMS}. We separate outlier-prone channels into a dedicated \texttt{GEMV} path, zero their row in the main kernel, and then merge the results.}
+    \label{oswq}
+    \vspace{-4mm}
+\end{figure}
+% \vspace{-2mm}
+\noindent\paragraph{\textbf{Why Not Subtract Channel Means Directly?}}
+A straightforward idea is to separate out each channel's mean before applying $H$ and then re-inject it afterward. However, this leads to two major issues: 1. The separated means are still subject to Hadamard rotation, creating a new linear transformation where the first channel again becomes large. 2. Splitting and then re-injecting the means effectively doubles the linear operations, significantly increasing the computational cost. In contrast, our RMS approach modifies only the row triggering the outlier condition and does not require additional linear layers, thereby offering a more efficient and effective resolution. 

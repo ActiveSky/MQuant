@@ -1,0 +1,360 @@
+\appendix
+\section{Appendix}
+
+\subsection{MQuant Algorithm}
+\label{Mquant}
+Here, we present overall \emph{MQuant} algorithm for MLLMs in Algorithm~\ref{alg:MQuant}.
+\begin{algorithm}[!htbp]
+\caption{\emph{MQuant} Quantization Algorithm}
+\label{alg:MQuant}
+\textbf{Input}: Full-precision (FP) MLLM model with a vision encoder $\mE$, visual-language projector $\mP$, and a large language model $\textbf{LLM}$; Calibration dataset $D^c$.\\
+\textbf{Output}:
+\begin{itemize}
+\item For $\mE$ and $\mP$: per-channel weight scale $s^E_{w}$, per-channel weight zero-point $z^E_{w}$, per-tensor activation scales $s^E_{a}$, per-tensor activation zero-point $z^E_{a}$.
+\item For $\textbf{LLM}$: per-channel weight scale $s^{llm}_{w}$, per-channel weight zero-point $z^{llm}_{w}$, per-tensor activation scales $s^{^{llm}}_{a^v}$ for visual tokens and $s^{llm}_{a^t}$ for textual tokens, per-tensor activation zero-points $z^{llm}_{a^v}$ for visual tokens and $z^{llm}_{a^s}$ for textual tokens.
+\end{itemize}
+\begin{algorithmic}[1]
+\STATE Apply Hadamard Rotation to the LLM Part as described:
+\STATE Apply the offline and online Hadamard rotations to all the weights and activations in $\textbf{LLM}$.
+\STATE Quantize Weights of the LLM:
+\STATE Input the calibration dataset $D^c$ to the FP MLLM.
+\STATE Use GPTQ to quantize the weights for $\textbf{LLM}$, obtaining per-channel weight quantization parameters $s^{llm}_{w}$ and $z^{llm}_{w}$.
+\STATE For the LLM Part:
+\begin{enumerate}[label=(\alph*)]
+\item Input $D^c$ to the FP MLLM.
+\item Compute per-tensor activation quantization parameters $s^{^{llm}}_{a^v}$ and $s^{llm}_{a^t}$, $z^{llm}_{a^v}$ and $z^{llm}_{a^t}$ for visual and textual tokens respectively, based on the proposed Modality-Specific Static Quantization (MSQ) in Sec 3.1.
+\item Reorder the input mixed token sequence from $E = {e^t_1, \dots, e^v_m, \dots, e^v_n, \dots, e^t_L}$ to a unified modality-decoupled sequence $E^u = {e^v_m, \dots, e^v_n, e^t_1, \dots, e^t_{m-1}, \dots, e^t_{n+1}, \dots, e^t_L}$ using the proposed Attention-Invariant Flexible Switching (AIFS) scheme in Sec 3.1.
+\end{enumerate}
+\STATE Transform all the LayerNorm to RMSNorm in MLLM vision encoder $\mE$ and Visual-Language Projector $\mP$ using the proposed Post LayerNorm-to-RMSNorm transformation.
+\STATE Apply the offline and online Hadamard rotations to all the weights and activations in $\mE$ and $\mP$.
+\STATE Quantize Weights of $\mE$ and $\mP$:
+\STATE Input $D^c$ to the transformed FP vision encoder $\mE$ and Visual-Language Projector $\mP$.
+\STATE Use GPTQ to quantize $\mE$ and $\mP$, obtaining per-channel weight quantization parameters $s^E_{w}$ and $z^E_{w}$.
+\STATE Address the weight outliers using caused by online Hadamard based on the proposed Rotation Magnitude Suppression (RMS) in Sec 3.2.
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Rotary Position Embedding for Attention-Invariant Flexible Switching}
+\label{rope}
+Many modern LLMs~\citep{touvron2023llama,llama2,llama3} use rotary position embedding (RoPE)~\citep{su2021roformer} to encode information about the order of tokens in the input sequence. Rotary position embeddings are linear transformations applied to keys and queries defined as: 
+\vspace{-2mm}
+\begin{equation}
+R_{\Theta,m}^{d_h} =
+	\begin{pmatrix}
+		\cos{i\theta_1}& -\sin{i\theta_1} &\cdots & 0 &0\\
+		\sin{i\theta_1}&\cos{i\theta_1}   &\cdots & 0 &0 \\
+  %           0 &0 &\cos{i\theta_2}& -\sin{i\theta_2} &\cdots & 0 &0\\
+		% 0 & 0 &\sin{i\theta_2}&\cos{i\theta_2}   &\cdots & 0 &0 \\
+		\vdots &\vdots &\ddots &\vdots &\vdots &\vdots &\vdots\\
+    		0 & 0  &\cdots&\cos{i\theta_{d_h/2}}& -\sin{i\theta_{d_h/2}}\\
+		 0 &0 &\cdots&\sin{i\theta_{d_h/2}}&\cos{i\theta_{d_h/2}}
+	\end{pmatrix}
+    \label{algo:rope}
+\end{equation}
+where $i \in [1, L]$ is the token index, $\Theta = \{\theta_i=10000^{-2(i-1)/D}, i \in [1, 2, ..., D/2]\}$, and $\theta_i,\, i \in 1..D/2$ are predefined constants.
+
+In the proposed Attention-Invariant Flexible Switching (AIFS) mechanism, we also apply the rearrangement for position embedding to maintain the computation equivalence. For a mixed input token $E = \left\{e^t_1,...,e^v_m,...,e^v_n,...,e^t_L) \in (\mE_v,\mE_t)\right\}$ (in Eq. 3), where $m$ and $n$ denote the start and end indices of the visual tokens. Specifically, after AIFS, the unified token can formulated as: $E = \left\{e^v_m,...,e^v_n,e^t_1,...,e^t_{m-1},...,e^t_L) \in (\mE_v,\mE_t)\right\}$. Therefore, the unified token indices after AIFS can be represented as:
+\begin{equation}
+(m,...,n,1,...,{m-1},{n+1},...,L) = AIFS{(1,...,m,...,n,...,L)}
+\end{equation}
+Due to we are aware of the final indices for input token after AIFS, than we can utilize the reorder token indices for Eq~\ref{algo:rope} to get the corresponding position embedding.
+
+\subsection{Weights Outliers after Online Hadamard Transformation} 
+\label{weight_outliers}
+Following~\citep{tseng2024quip+,ashkboos2024quarot} we make use of fast Hadamard transformation where convenient. Hadamard matrix is an orthogonal matrix with entries proportional to $\{+1, -1\}$. A Walsh-Hadamard matrix is a square matrix of size $2^n$ with For a Hadamard matrix:
+\begin{align}
+    \mH_2 = \tfrac{1}{\sqrt{2}}\left[\begin{array}{cc}
+    1&1\\1&-1\end{array}\right]
+    \qquad\textrm{and} \qquad \mH_{2^n} = \mH_2 \otimes \mH_{2^{n-1}}\,. \\
+    (AB)_{ij} = \sum_{r=1}^{n} a_{ir} b_{rj} = a_{i1} b_{1j} + a_{i2} b_{2j} + \cdots + a_{in} b_{nj}
+\vspace{-4mm}
+\end{align}
+Thereby the $\mH W_{\ell_2}$ can be formulated as:
+\vspace{-2mm}
+\begin{align}
+    (\mH W_{\ell_2})_{ij} = \sum_{r=1}^{n} h_{ir} w_{rj} = h_{i1} w_{1j} + h_{i2} w_{2j} + \cdots + h_{in} w_{nj}
+\vspace{-4mm}
+\end{align}
+where $\mH\in\mathbb{R}^{d_{in} \times d_{in}}$ and $W_{\ell_2} \in\mathbb{R}^{d_{in} \times d_{out}}$, $d_{in}$ and $d_{out}$ is the dimension of input and output of weight $W_{\ell_2}$. Due to the properties of the Hadamard matrix $\mH$, whose first row consists entirely of $1$, for the first row in $(\mH W_{\ell_2})$, $(\mH W_{\ell_2})_{0j} = \sum_{r=1}^{n} w_{rj}$, due to the property of Hadamard matrix $\mH$. So, the values in $W_{\ell_2}$ are subject to continuous accumulation and summation, resulting in the exists of outliers in the first row of the output matrix $\mH W_{\ell_2}$. Notably, the matrix $\mH W_{\ell_2}\mQ$ still has the same problem, for simplicity, we omit the matrix $\mQ$ in the main paper. 
+
+\subsection{Attention Mask in AIFS when Multi-batch Inference.}
+\label{multi-batch mask}
+
+\begin{figure}[!htbp]
+    \centering    
+    \includegraphics[width=1.0\linewidth]{figures/AIFSV3_pad.pdf}
+    \vspace{-2mm}
+    \caption{The illustration of causal mask when batch size > 1.} 
+    \label{mask_mutli-batch}
+\vspace{-3mm}
+\end{figure}
+
+% \begin{wrapfigure}{r}{5.5cm}
+%   % \vspace{-13mm}
+%   % \begin{adjustbox}{max width=\linewidth}
+%     \includegraphics[width=1.0\linewidth]{figures/AIFSV3_pad.pdf}
+%     \caption{The illustration of causal mask when batch size > 1.}
+%   \label{mask_mutli-batch}
+%   \vspace{-8mm}
+% \end{wrapfigure}
+During multi-batch inference, we first identify the longest token length within the batch. Subsequently, we left-pad the shorter sequences with $pad_token_id$ to align all batches to this maximum length. By applying left padding, the padding tokens are associated with the image modality. Additionally, the padded regions are assigned a mask value of 0, ensuring that they do not interfere with attention computations and thereby do not affect the final results. For clarity, we also plot an illustration of causal mask when batch size >1.
+
+\subsection{Effectiveness of Rotational Magnitude Suppression for Weight Outliers in LLMs.}
+\label{RMS4LLMs}
+
+\begin{table}[h]
+\caption{WikiText-2 perplexity (PPL) on 4-bit quantized LLaMA2 models with an input sequence length of 2048. Lower PPL is better.}
+\label{table:quarot+rms}
+\centering
+\resizebox{0.8\linewidth}{!}{
+\begin{tabular}{l|c|ccc}
+\toprule
+\multirow{2}{*}{\textbf{Method}} & \multirow{2}{*}{\textbf{Weight Quantization}} & \multicolumn{3}{c}{\textbf{PPL}} \\
+\cmidrule(lr){3-5}
+ & & \textbf{LLaMA2 7B} & \textbf{LLaMA2 13B} & \textbf{LLaMA2 70B} \\
+\midrule
+Baseline & --    & 5.47 & 4.88 & 3.32 \\
+QuaRot   & GPTQ  & 6.10 & 5.40 & 3.79 \\
+\rowcolor{blue!10}
+QuaRot + RMS & GPTQ & 6.04 & 5.32 & 3.67 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+For LLMs, compared to the original Quarot, integrating RMS with Quarot leads to performance improvements across LLaMA2 models with 7B, 13B, and 70B parameters, as detailed in Table. 4. For MLLMs, ablation studies presented in Table~\ref{table:ablation} demonstrate that the RMS method significantly enhances quantization performance.
+
+
+\begin{figure*}[h]
+    \centering    
+    \includegraphics[width=1.0\textwidth]{figures/vision_image_resolution.pdf}
+    \vspace{-3mm}
+    \caption{The number of prefill visual tokens across different MLLMs as the image splits or resolution increases.} 
+    \label{fig:obs_reso}
+\vspace{-3mm}
+\end{figure*}
+
+\subsection{Image Tokens in Various MLLMs} 
+As shown in Fig \ref{fig:obs_reso}, for different MLLMs~\citep{qwenvl,Qwen2VL,yao2024minicpmv,chen2024internvl}, the number of prefill visual tokens grows as image resolution increases. This rapid expansion in token count exacerbates the inference latency, particularly in per-token dynamic quantization, which requires separate processing for each token, such as memory access and scale computation. As a result, the TTFT in MLLMs increases drastically, severely impacting overall inference latency. Moreover, in higher-demand scenarios such as video-based tasks and multi-image dialogues, the accumulation of visual tokens becomes even more pronounced, further exacerbating the increase in TTFT.
+
+\subsection{RMS Algorithm}
+\label{RMS_algo}
+Here, we present the algorithm of our \emph{RMS} design with Quarot in Algorithm~\ref{alg:rms+quarot}.
+
+\begin{algorithm}
+\small
+\caption{RMS Integration with Quarot}
+\label{alg:rms+quarot}
+\begin{algorithmic}[1]
+    \REQUIRE An LLM or MLLM model
+    \ENSURE Quantized model with RMS
+    
+    \STATE Initialize an empty list $marks$
+    \FOR{each linear layer in the $model$}
+        \IF{Layer satisfies Eq. 9}
+            \STATE Mark the layer and append its ID to $marks$
+        \ENDIF
+    \ENDFOR
+    \STATE Apply Quarot or other Hadamard-based transformations to the $model$
+    \FOR{each layer ID in $marks$}
+        \STATE Modify the layer's implementation using the RMS method
+    \ENDFOR
+    \STATE Quantize the $model$
+    \STATE \textbf{return} $model$
+\end{algorithmic}
+\end{algorithm}
+
+
+\begin{table*}[h]
+    \caption{Comparison of latency and memory saving with Pytorch and AWQ on Qwen2-VL-7B. $^{\ddag}$ means the Qwen2-VL-7B official implementation.}
+    \vspace{-4.5mm}
+    \label{tab:ablation2}
+    \begin{adjustbox}{max width=0.8\linewidth}
+        \begin{tabular}{ccc|cc|cc}\\
+        \toprule 
+        Image size & \multicolumn{2}{c|}{Pytorch$^{\ddag}$ (BF16)}& \multicolumn{2}{c|}{AWQ$^{\ddag}$ (W4-only)}& \multicolumn{2}{c}{MQuant (W4A8)} \\ \cline{2-7}
+         H $\times$ W & Latency(s)& Memory(G) & Latency(s)& Memory(G)&Latency(s)& Memory(G) \\
+        \midrule        
+        280$^2$ & 0.257 &16.45 &0.286 (\color{myred}{-10.14\%}) &7.45 (\color{mygreen1}{+120.67\%}) &0.220 (\textbf{\color{mygreen1}{+16.82\%}}) &6.50 (\textbf{\color{mygreen1}{+152.92\%}})\\
+        560$^2$ &0.252 &16.45 &0.292 (\color{myred}{-13.70\%}) &7.45 (\color{mygreen1}{+120.67\%})&0.211 (\textbf{\color{mygreen1}{+19.48\%}}) &6.50 (\textbf{\color{mygreen1}{+152.92\%}})\\
+        840$^2$ & 0.261 &16.45 &0.304 (\color{myred}{-14.14\%}) &7.45 (\color{mygreen1}{+120.67\%})&0.210 (\textbf{\color{mygreen1}{+24.76\%}})&6.50 (\textbf{\color{mygreen1}{+152.92\%}})\\
+        1120$^2$ & 0.326 &16.58 &0.384 (\color{myred}{-15.10\%}) &7.56 (\color{mygreen1}{+119.51\%})&0.262 (\textbf{\color{mygreen1}{+24.48\%}})&6.61 (\textbf{\color{mygreen1}{+151.59\%}})\\
+        1400$^2$ & 0.559 &16.90 &0.652 (\color{myred}{-14.29\%}) &7.90 (\color{mygreen1}{+113.92\%})&0.432 (\textbf{\color{mygreen1}{+20.24\%}})&6.97 (\textbf{\color{mygreen1}{+142.71\%}})\\
+        1680$^2$ & 0.881 &17.33 &1.066 (\color{myred}{-17.39\%}) &8.33 (\color{mygreen1}{+108.57\%})&0.705 (\textbf{\color{mygreen1}{+18.23\%}})&7.40 (\textbf{\color{mygreen1}{+130.27\%}})\\
+        1960$^2$ & 1.369 &17.82 &1.598 (\color{myred}{-14.26\%}) &8.82 (\color{mygreen1}{+100.00\%})&1.112 (\textbf{\color{mygreen1}{+16.63\%}})&7.85 (\textbf{\color{mygreen1}{+119.93\%}})\\
+        2240$^2$ & 2.013 &18.40 &2.294 (\color{myred}{-12.24\%}) &9.40 (\color{mygreen1}{+95.74\%})&1.653 (\textbf{\color{mygreen1}{+17.83\%}})&8.44 (\textbf{\color{mygreen1}{+117.84\%}})\\
+        2520$^2$ & 2.820 &19.04 &3.175 (\color{myred}{-11.14\%}) &10.05 (\color{mygreen1}{+89.59\%})&2.357 (\textbf{\color{mygreen1}{+19.63\%}})&9.10 (\textbf{\color{mygreen1}{+109.92\%}})\\
+        2880$^2$ & 3.883 &19.77 &4.345 (\color{myred}{-10.64\%}) &10.77 (\color{mygreen1}{+83.81\%})&3.297 (\textbf{\color{mygreen1}{+17.69\%}})&9.82 (\textbf{\color{mygreen1}{+101.07\%}})\\
+        3080$^2$ & 5.208 &20.58 &5.872 (\color{myred}{-11.27\%}) &11.58 (\color{mygreen1}{+77.60\%})&4.488 (\textbf{\color{mygreen1}{+16.02\%}})&10.61 (\textbf{\color{mygreen1}{+96.45\%}})\\
+        3360$^2$ & 6.814 &21.46 &7.548 (\color{myred}{-9.73\%}) &12.46 (\color{mygreen1}{+70.65\%})&6.004 (\textbf{\color{mygreen1}{+13.41\%}})&11.50 (\textbf{\color{mygreen1}{+83.01\%}})\\
+        3640$^2$ & 8.360 &22.22 &9.377 (\color{myred}{-10.84\%}) &13.22 (\color{mygreen1}{+57.54\%})&7.469 (\textbf{\color{mygreen1}{+11.91\%}})&12.25 (\textbf{\color{mygreen1}{+61.65\%}})\\
+        4480$^2$ & 8.349 &22.22 &9.379 (\color{myred}{-10.97\%}) &13.22 (\color{mygreen1}{+57.54\%})&7.469 (\textbf{\color{mygreen1}{+11.71\%}})&12.25 (\textbf{\color{mygreen1}{+61.65\%}})\\
+        5600$^2$ & 8.380 &22.22 &9.393 (\color{myred}{-10.78\%}) &13.22 (\color{mygreen1}{+57.54\%})&7.469 (\textbf{\color{mygreen1}{+12.19\%}})&12.25 (\textbf{\color{mygreen1}{+61.65\%}})\\
+            \hline
+            \end{tabular}  
+    \end{adjustbox}
+\label{tab:speedup_append}
+\vspace{-3mm}
+% \end{wraptable}
+\end{table*}
+
+\subsection{Speedup and Memory Savings with Scaling Image Resolution}
+\label{Speed_mem_image}
+We fixed the input sequence as "text-image-text" with 15 textual tokens and presented the detailed changes of speed and memory, varying the image resolution from $280\times280$ to $5600\times5600$. Notably, the "text-image-text" sequence setting is not arbitrarily chosen; instead, it is a common setting in existing evaluation datasets~\citep{duan2024vlmevalkit}. We evaluate speedup and memory savings by comparing PyTorch's BF16, AWQ (W4-only), and our MQuant (W4A8). \textbf{Speedup:} As shown in Table \ref{tab:speedup_append}, MQuant consistently achieves speedups over both PyTorch and AWQ across all resolutions, with a maximum of 24.76\% over PyTorch at $840\times 840$. Notably, MQuant outperforms AWQ, which is slower than PyTorch at most resolutions due to negative speedups. This significant speedup highlights the advantage of our per-tensor static quantization, eliminating the overhead of token-wise scale computation. Even at higher resolutions (e.g., $5600^2$), MQuant maintains a 12.19\% latency improvement, demonstrating scalability across various image sizes. \textbf{Memory Savings:} MQuant offers substantial memory reductions compared to both PyTorch and AWQ. It consistently reduces memory usage by over 100\% compared to PyTorch (e.g., 152.92\% at $840^2$) and significantly outperforms AWQ's memory efficiency, achieving up to 101.07\% savings at higher resolutions. These experiments demonstrate MQuant's strengths in both latency and memory savings, achieving up to 24.76\% faster inference and reducing memory consumption by over 100\% compared to baseline methods. This makes MQuant a more efficient solution for deploying MLLMs in resource-constrained environments.
+
+
+\subsection{Comparison of Online vs.\ Without Online Hadamard Transform in Quarot}
+\label{sec:online-hadamard}
+
+In this section, we evaluate how online Hadamard transformations affect perplexity (PPL) in Quarot for different LLaMA2 models (7B and 13B) under two bit settings, \texttt{W4A8KV4} and \texttt{W4A4KV4}. As shown in Table~\ref{table:online-hadda}, enabling online Hadamard transforms yields consistent improvements, especially under more aggressive quantization (e.g., \texttt{W4A4KV4}).
+
+\begin{table}[h]
+\caption{Comparison of perplexity (PPL) with or without online Hadamard transforms in Quarot, evaluated on LLaMA2 models of sizes 7B and 13B. Lower PPL is better.}
+\label{table:online-hadda}
+\centering
+\resizebox{0.8\linewidth}{!}{
+\begin{tabular}{l|c|cc}
+\toprule
+\multirow{2}{*}{\textbf{Model}} & \multirow{2}{*}{\textbf{Bit Setting}} & \multicolumn{2}{c}{\textbf{PPL}} \\
+\cmidrule(lr){3-4}
+ & & With Online & Without Online \\
+\midrule
+LLaMA2 7B  & W4A8KV4 & 5.736 & 5.830 \\
+LLaMA2 7B  & W4A4KV4 & 6.358 & 14.375 \\
+LLaMA2 13B & W4A8KV4 & 5.123 & 5.146 \\
+LLaMA2 13B & W4A4KV4 & 5.585 & 24.401 \\
+\bottomrule
+\end{tabular}
+}
+\vspace{-4mm}
+\end{table}
+
+We observe that online Hadamard transforms provide substantial gains when using \texttt{W4A4KV4} for both 7B and 13B models, reducing PPL from over 14.3 to 6.36 (7B) and from 24.4 to 5.58 (13B), respectively. These results demonstrate the effectiveness of online Hadamard transformations in maintaining quantization accuracy at lower bit precision.
+
+\subsection{Advantage of Proposed MSQ and AIFS}
+\label{aifs_msq_pros}
+In per-tensor static quantization, the quantization parameters (i.e., scale and zero-point) are precomputed for an entire tensor (e.g., weights or activations) and remain fixed throughout inference. While efficient, this approach often leads to large and unacceptable accuracy loss in MLLMs due to their diverse activation distributions across varying inputs.
+
+In contrast, per-token dynamic quantization computes quantization parameters on-the-fly for each input token during inference. This approach incurs significantly higher computational overhead, as the quantization parameters must be recalculated for every input token, along with multiple additional memory traversals. Such requirements make per-token dynamic quantization unfriendly or impractical for edge devices and some AI accelerators, which struggle with fine-grained dynamic operations~\cite{2024_mobilequant}. This issue is especially severe in MLLMs, where the token count increases significantly with higher image resolution or more video frames. The Modality-Specific Static Quantization (MSQ) in MQuant is a novel per-modality quantization approach specifically designed to address the unique challenges of MLLMs quantization.
+
+Furthermore, MSQ can be naturally applied to the unified modality-decoupled tokens generated by AIFS. By integrating MSQ and AIFS, our designs yields three key advantages: \textbf{(1) Computational Equivalence and Strong Compatibility}: The unified causal mask and token index introduced by AIFS preserves the inherent causal relationships among tokens, ensuring numerical equivalence during attention computations. Moreover, since AIFS requires only a one-time rearrangement of the input data (adjust causal mask and token index in offline), it does not alter the overall computation graph. This characteristic allows for seamless integration with other LLM inference acceleration methods, such as FlashAttention~\citep{dao2022flashattention}, ensuring both computational equivalence and strong compatibility. As shown in Table~\ref{table:main_results}, MQuant achieves SOTA quantization performance across 5 mainstream MLLMs. \textbf{(2) Reduced Inference Latency}: MSQ not only addresses the substantial distributional differences between modalities but also mitigates the significant computational overhead and increased inference latency caused by the surge in token counts from higher image and video resolutions. As shown in Table~\ref{table:AIFS_laten}, MSQ+AIFS significantly reduces latency from 2.057s to 1.1017s, closely matching the speed of the per-tensor static setting while maintaining near-lossless accuracy comparable to the original Float model. \textbf{(3) Enhanced Memory and Computational Efficiency}: By combining MSQ and AIFS, we convert mixed input tokens into unified, modality-decoupled tokens, eliminating the irregular memory operations (e.g., slice, concat, pad) introduced by directly applying MSQ. This transformation reduces memory consumption and improves efficiency of \texttt{GEMM} kernel, which would otherwise be compromised by the interleaved and non-fixed positions of visual and textual tokens. As shown in Table~\ref{tab:ablation2}, MQuant can achieve up to 24.7\% speedup and 152.9\% memory savings.
+
+\subsection{Comparison of Different MLLMs: Input Pre-Process, LayerNorm Architecture in Vision Encoder, Model Parameters and Flops.}
+\label{MLLMs_comparison}
+
+\begin{table*}[h]
+\caption{Comparison of TTFT sensitivity to image resolution, model Parameters and flops in mainstream MLLMs. $^\dagger$ means the Flops values are measured with the number of visual tokens is 256.}
+% \vspace{+2mm}
+\label{table:ln-compare}
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{l|l|c|cc|cc}
+\toprule
+\multirow{2}{*}{\textbf{MLLMs}} &  \multirow{2}{*}{\textbf{TTFT's sensitivity to input image resolution}} &  \multirow{2}{*}{\textbf{LayerNorm}}& \multicolumn{2}{c|}{\textbf{Params (B)}} & \multicolumn{2}{c}{\textbf{FLOPs (T)$^\dagger$}} \\
+& & &Visual & LLM &Visual & LLM \\
+\toprule
+\rowcolor{gray!25}
+InternVL2-8B & TTFT increases with input image aspect ratio & Pre-LN & 0.34 & 7.74 &1.28 &7.54 \\
+\rowcolor{gray!10}
+Qwen-VL-Chat-9.6B& Fixed input resolution (448×448)  &Pre-LN &1.94 &7.73 &4.23 &3.70 \\
+\rowcolor{gray!25}
+MiniCPM-V 2.6-8B& TTFT increases with input image aspect ratio &Pre-LN &0.49 &7.61 &4.16 &3.64 \\
+\rowcolor{yellow!20}
+Qwen2-VL-7B  & TTFT increases \textbf{quadratically} with input image resolution &Pre-LN &0.68 &7.61 &1.31 &3.61 \\
+\rowcolor{gray!10}
+GLM-4V-9B  & Fixed input resolution (1120×1120) &Post-LN &4.51 & 8.78 &12.10 &4.70 \\  
+\bottomrule
+\end{tabular}
+}
+% \vspace{-4mm}
+\end{table*}
+
+In this section, we compare the visual input pre-process methods, LayerNorm structures in MLLM vision encoder, model parameters, and Flops across five mainstream MLLMs: InternVL2-8B~\citep{internvl15}, Qwen-VL-Chat-9.6B~\citep{qwenvl}, MiniCPM-V 2.6-8B~\citep{yao2024minicpmv}, Qwen2-VL-7B~\citep{Qwen2VL}, and GLM-4V-9B~\citep{CogVLM2}. As shown in Table~\ref{table:ln-compare}, this comparison highlights the architectural differences between these models, particularly the TTFT sensitivity to input image resolution, illustrating the unique challenges these variations present for quantization and efficient inference.
+
+\subsection{Quantization Granularity} 
+\label{quant_granularity}
+Furthermore, as mentioned in SoomthQuant ~\citep{xiao2022smoothquant}, there are different different granularity levels. The \textbf{per-tensor static} quantization uses a single step size for the entire matrix. \textbf{Per-token dynamic} quantization employs different $s$ for the activations associated with each token, being a common granularity for activations quantization of existing LLMs. For weights, per-channel quantization applies distinct $s$ for each output channel of the weights, while group-wise quantization utilizes a coarse-grained $s$ for different channel groups. Notably, group-wise quantization is a prevalent granularity for weight quantization in LLMs ~\citep{frantar2022gptq}.
+
+\subsection{LayerNorm, RMSNorm and Computational Invariance}
+\label{section:background-norm}
+We introduce LayerNorm, RMSNorm, computational Invariance, and their usage in Transformers.
+
+\textbf{Layer Normalization} (LayerNorm, LN) \citep{layernorm} is a technique to normalize the activations of intermediate layers of neural networks.
+Given a vector $\mathbf{x} \in \mathbb{R}^d$, LayerNorm normalizes it to obtain a zero-mean unit-variance vector,
+\begin{equation}
+    \text{LayerNorm}(\mathbf{x}) = \frac{\mathbf{x} - \mu(\mathbf{x})\mathbf{1}}{\sqrt{\lVert{\mathbf{x}}\lVert_2^2/ d - \mu^2(\mathbf{x}) + \epsilon}}, \text{where } \mu(\mathbf{x}) = \frac{\mathbf{1}^T \mathbf{x}}{d}, \epsilon > 0.
+\end{equation}
+LayerNorm recenters and rescales the activations and gradients in the forward and backward computations, which enables fast and robust training of neural networks.
+
+\textbf{Root Mean Square Normalization} (RMSNorm) \citep{RMSNorm} is another technique used for normalizing the activations.
+It is similar to LayerNorm in that it aims to accelerate and stabilize the training but uses a different normalization approach.
+Instead of normalizing the inputs based on their mean and variance, RMSNorm normalizes them based on their root mean square (RMS) value.
+It is defined in the following equation,
+\begin{equation}
+    \text{RMSNorm}(\mathbf{x}) = \frac{\mathbf{x}}{\sqrt{\lVert{\mathbf{x}}\lVert_2^2 / d + \epsilon}}, \text{where } \epsilon > 0.
+\end{equation}
+RMSNorm only rescales the input vector and the corresponding gradients, discarding the recentering process.
+As shown in their definitions, RMSNorm is computationally simpler and more efficient than LayerNorm.
+It is reported that replacing LayerNorm with RMSNorm can achieve comparable performance and save training and inference time by $7\%-64\%$ \citep{RMSNorm}.
+
+Given a zero-mean vector $\mathbf{x}$, these two kinds of normalization are equivalent.
+Formally, if $\mu(\mathbf{x}) = 0$, then $\text{LayerNorm}(\mathbf{x}) = \text{RMSNorm}(\mathbf{x})$.
+We may optionally introduce learnable parameters and apply an element-wise affine transformation on the output of LayerNorm and RMSNorm.
+
+\paragraph{LayerNorm (LN) and RMSNorm} Given the input concated token $\mX$ after embeddings with the shape $L\times D$, the $\mX$ is passed through a LayerNorm~\citep{layernorm} operation, which subtracts the mean from each row of the matrix, divides the row by its standard deviation, rescales (columnwise), and adds an offset. Follow ~\citep{ashkboos2024slicegpt}, we write the LayerNorm block as
+\begin{equation}
+\textrm{LayerNorm}(\mX) = \textrm{RMSNorm}(\mX \mM)\textrm{diag}(\boldsymbol\alpha)\sqrt{D} + \mathbf{1}_N\boldsymbol\beta^\top
+\label{eq:LN}
+\end{equation}
+where $\textrm{RMSNorm}(\mX)$ applies $\mathbf{x}\leftarrow\mathbf{x}/\Vert\mathbf{x}\Vert$ to each row of $\mX$, and $\mX = concat(\mE_v,\mE_t))$ is the concatenation between text tokens $\mE_t$ and the visual tokens $\mE_v$.
+The vector parameter $\boldsymbol\alpha$ and offset (vector) parameter $\boldsymbol\beta$ are learned independently at each LayerNorm instance. The constant matrix $\mM=\mI - \frac{1}{D}\mathbf{1}\mathbf{1}^\top$ is a $D\times D$ matrix which subtracts the mean from each row of $\mX$, called recentering operation. Formally, if $\mM=\mI$, the input $\mX$ has a zero-mean, the Eq \ref{eq:LN} is equivalent to RMSNorm. Specifically, LayerNorm is widely employed in visual encoders $E$, whereas RMSNorm ~\citep{RMSNorm} is commonly used in LLMs~\citep{touvron2023llama, llama3} and has been shown to accelerate training and inference time with similar performance \citep{RMSNorm}.
+
+\paragraph{Computational Invariance in RMSNorm.} 
+Based on the \emph{computational invariance}, recent studies~\citep{ashkboos2024slicegpt, ashkboos2024quarot} have shown that orthogonal transformations can effectively smooth outliers and improve the quantize-ability of both weights and activations. In particular, for transformers, inserting linear layers with an orthogonal matrices $\mQ$ before and after the RMSNorm~\citep{RMSNorm} layer in a transformer, the network remains unchanged. In detail, given the input $\mX$ and orthogonal matrix $\mQ$ for RMSNorm layer, the \emph{computational invariance} means: $\textrm{RMSNorm}(\mX \mQ)\mQ^\top = \textrm{RMSNorm}$. Here, $\mQ^\top\mQ = \mQ\mQ^\top = \mI$ and a rotation matrix is an orthogonal matrix with $|\mQ| = 1$. Note that multiplying a vector $\mathbf{x}$ by $\mQ$ does not change the norm of the vector, since $\Vert\mQ\mathbf{x}\Vert = \sqrt{\mathbf{x}^\top\mQ^\top \mQ\mathbf{x}} = \sqrt{\mathbf{x}^\top\mathbf{x}} = \Vert\mathbf{x}\Vert$.
+
+\subsection{LayerNorm to RMSNorm Transformation.}
+\label{pre-LN2RMSN}
+
+\begin{figure*}[h]
+    \centering    
+    \includegraphics[width=0.9\textwidth]{figures/Post-LN+Rotate.pdf}
+    \vspace{-4mm}
+    \caption{The proposed Post-LN + Rotate Scheme.} 
+    \label{fig:post-LN+RMSNorm}
+\vspace{-2mm}
+\end{figure*}
+\paragraph{Post-LayerNorm to RMSNorm Transformation.} As shown in Figure~\ref{fig:post-LN+RMSNorm}, we present the detailed Post-LN + Rotate design. Unlike the Pre-LN + Rotate in SliceGPT~\cite{ashkboos2024slicegpt}, our Post-LN + Rotate scheme extends the applicability for different MLLMs' vision encoder.  
+
+\paragraph{Pre-LayerNorm to RMSNorm Transformation.} Here, we propose unified LayerNorm-to-RMSNorm transformation, aiming to synthesize the transformer architecture of MLLMs' vision encoders and LLMs, endowing them with rotation-friendly characteristics that facilitate the effective removal of outliers. We take Pre-LN transformer as an example to show that how transform Pre-LN into RMSNorm layer while guaranting arithmetic equivalence. As shown in Figure \ref{preLN2RMSNorm} (a), for the input $\mX_k$ of the $k$-th block, the main block in pre-LN transformer is $\mX_{k+1} = \mX_k + \ell_2(g(\ell_1(LN(\mX_k))))$, where $k \in [1, N]$, and $N$ is the block number. If $g$ is an activation function, such as GELU, this block is a multi-layer perceptron (MLP) module. If $g$ is a multi-head attention, then this block is the casual attention module \citep{vaswani2017attention}. Due to the recentering operation, LN exhibits invariance to shifts, such that $LN(\mX_k - a\mathbf{1}) = LN(\mX_k), \forall a \in \mathbb{R}$. 
+\begin{wrapfigure}{r}{6.5cm}
+  % \vspace{-3mm}
+  % \begin{adjustbox}{max width=\linewidth}
+    \includegraphics[width=1.0\linewidth]{figures/Pre-LN-RMSN.pdf}
+    \caption{The illustration of transformation from Pre-LN to RMSNorm.}
+  % \end{adjustbox}
+  % \vspace{-4mm}
+  \label{preLN2RMSNorm}
+  \vspace{-4mm}
+\end{wrapfigure} Therefore, as shown in Figure \ref{preLN2RMSNorm} (b), we can replace LN as RMSNorm layer through two modifications: \raisebox{-0.5pt}{\ding[1.1]{182\relax}} recenter the input $\mX_k$ to $\mX_k - \mu(\mX_k)\mathbf{1}$, ensuring that the input to norm layer maintain a zero mean. \raisebox{-0.5pt}{\ding[1.1]{183\relax}} adjust the weights $\mA_2$ and bias $\mathbf{b}_2$ of the the linear $\ell_2$ to $\hat{\mA_2} = \mA_2 - \frac{1}{D}\mathbf{1} \mathbf{1}^T \mA_2, \hat{\mathbf{b}_2} = \mathbf{b}_2 - \mu(\mathbf{b}_2)\mathbf{1}$. Consequently, the LN can be replaced with an RMSNorm layer with the same arithmetic functionality. The first operation is to recenter $\mX_{k}$, while the second operation is to recenter the output of main branches. Notably, since $\mX_{k+1} = \mX_k + \ell_2(g(\ell_1(LN(\mX_k))))$, after applying \raisebox{-0.5pt}{\ding[1.1]{182\relax}} and \raisebox{-0.5pt}{\ding[1.1]{183\relax}}, the input and the output of main branch are re-centered with zero-mean, while the input of residual branches also maintain a zero mean. Therefore, the output after current blocks, $\mX_{k+1}$ (which serves as the input for next block), still maintain zero-mean. A detailed proof is provided in the Appendix. Ultimately, we establish the equivalence of Pre-LN and Pre-RMSNorm Transformers. Now that every LayerNorm in the transformer has been converted to RMSNorm in MLLMs, we can use any orthogonal matrices $\mQ$ to the model. Therefore, the visual encoder and LLMs are in a rotation-friendly RMSNorm-only transformer architecture.
+% \section{Research Methods}
+% \subsection{Part One}
+
+
+\begin{figure*}[h]
+    \centering    
+    \vspace{-3mm}
+    \includegraphics[width=0.9\linewidth]{figures/RMS_outliers_all.pdf}
+    \vspace{-5mm}
+    \caption{Illustration the weight distributions for the down-proj layer in different MLLMs's visual encoder under three conditions: (a) original weight, (b) weights after FHT, and (c) weight after FHT with our RMS.} 
+    \label{fig:RMS_weight_ablation}
+\vspace{-3mm}
+\end{figure*}
+
+\subsection{Weight Distribution Visualization with RMS.} 
+\label{weight_distritbuion}
+To facilitate a better analysis of RMS, we also visualize weight distribution across other mainstream MLLMs (InternVL, Qwen-VL, MiniCPM-V and ChatVLM2). As shown in Figure ~\ref{fig:RMS_weight_ablation}, we can observe that the FHT-induced weight outliers presents at all MLLMs. The weight distribution reveals that FHT amplification increases weight magnitudes, while RMS effectively reduces these magnitudes, significantly improving quantization stability. 
+
+\subsection{Discussion About Video-based MLLMs.}
+\label{video_MLLMs}
+In video-based MLLMs like Video-LLaMA~\citep{zhang2023video} and Qwen2-VL~\citep{Qwen2VL}, the pipeline involves sampling video frames at fixed intervals, extracting visual features per frame using a vision encoder, and modeling temporal relationships with downstream components (e.g., via temporal positional encoding in Video-LLaMA or 3D convolution in Qwen2-VL). Two key features emerge: (1) videos are processed as multi-frame image sequences, and (2) Our Modality-specific static quantization is not affected by the temporal-aware module. Therefore, for an input video, MQuant’s per-modality static quantization applies naturally: we compute quantization parameters offline across these visual frames. Specifically, the dynamic nature of visual tokens is handled as an image sequence, not altering our static quantization’s efficiency or accuracy in MQuant (Section 3).
+We recognize this as a promising direction for future work.

@@ -1,0 +1,488 @@
+\vspace{-2mm}
+\section{Experiments}\label{sec:exp}
+\vspace{-1mm}
+\label{exp}
+
+\begin{table}[t]
+\caption{Comprehensive quantization results of different MLLMs across various multimodal reasoning datasets.}
+% \vspace{+2mm}
+\label{table:main_results}
+\centering
+\Huge
+\resizebox{\linewidth}{!}{
+\begin{tabular}{c|c|cc|cccc}
+\toprule
+\multirow{2}{*}{\textbf{MLLMs}} &  \multirow{2}{*}{\textbf{Method}}& \multicolumn{2}{|c|}{\textbf{Bits Setting}} & \multirow{2}{*}{\textbf{T.VQA$\uparrow$}} & \multirow{2}{*}{\textbf{D.VQA$\uparrow$}} & \multirow{2}{*}{\textbf{OCRB.$\uparrow$}} & \multirow{2}{*}{\textbf{MME$\uparrow$}} \\
+& & Visual & LLM & \\
+\toprule
+  \rowcolor{gray!12}
+\cellcolor{white}& - & BF16 & BF16 & 77.65 & 90.97 & 794 & 2209 \\ 
+  & RTN & \multirow{4}{*}{W8A8} &\multirow{4}{*}{W4A8} & 52.02 & 59.04 &542 &1528 \\
+  & SQ &  & & 59.88 &59.75 &544 &1540 \\
+  & Quarot &  & & 73.34 & 84.07 & 715 & 2067 \\
+  \rowcolor{gray!25}
+  \cellcolor{white}{InternVL2} & \textbf{MQuant} &  & & \textbf{77.49} & \textbf{90.27} & \textbf{785} & \textbf{2156} \\
+  \cline{2-8}
+  \cellcolor{white}{-8B} & RTN &\multirow{4}{*}{W4A8} &\multirow{4}{*}{W4A8}& 40.06 &31.58&302 &1482 \\
+  & SQ&  & & 46.48 &31.21 &310 &1540 \\
+  & Quarot& & &49.10 &33.62 &361 &1941 \\
+  \rowcolor{gray!25}
+  \cellcolor{white} & \textbf{MQuant} && & \textbf{76.62} & \textbf{88.42} &\textbf{725} &\textbf{2155}\\ 
+  \midrule
+  \rowcolor{gray!12}
+  \cellcolor{white} & - & BF16 & BF16  & 61.40  &60.36 & 493 & 1834 \\
+  & RTN & \multirow{4}{*}{W8A8} &\multirow{4}{*}{W4A8} &  0.45 & 0.03 & 189 & 625 \\
+  & SQ &  & & 7.45 &7.70 & 160 &797 \\
+  & Quarot & &  & 45.32 &42.44 &286 &940 \\
+  \rowcolor{gray!25}
+  \cellcolor{white}{{{Qwen-VL}}} & \textbf{MQuant} &  & & \textbf{61.16} &\textbf{59.31} &\textbf{483} & \textbf{1691} \\ \cline{2-8}
+  \cellcolor{white}{{{-Chat-9.6B}}}& RTN & \multirow{4}{*}{W4A8} &\multirow{4}{*}{W4A8} & 1.02 &0.02 &193 &585 \\
+  & SQ &  & &  8.59 &4.28 &188 &921 \\
+  & Quarot &  & &  46.77 &37.35 & 289 & 1091 \\
+  \rowcolor{gray!25}
+  \cellcolor{white} &\textbf{MQuant} &  & & \textbf{60.50} &\textbf{58.72} &\textbf{473} &\textbf{1713} \\
+\midrule
+\rowcolor{gray!12}
+\cellcolor{white}& - & BF16 & BF16 & 79.10 &89.18 &847 &2248 \\
+& RTN &\multirow{4}{*}{W8A8} &\multirow{4}{*}{W4A8}& 61.00 & 65.16 & 332 & 1300 \\
+  & SQ &  & &  62.40 & 65.76 & 424 & 1510 \\
+  & Quarot  &  & & 73.71 &80.04 &736 &1850 \\
+  \rowcolor{gray!25}
+  \cellcolor{white}{MiniCPM-V} & \textbf{MQuant} &  & & \textbf{80.41} &\textbf{89.15} &\textbf{844} &\textbf{2244} \\ \cline{2-8}
+  \cellcolor{white}{2.6-8B}& RTN & \multirow{4}{*}{W4A8} &\multirow{4}{*}{W4A8} &60.70 &62.23 &351 &1404 \\
+  & SQ &  & &  65.67 &60.02 &455 &1491\\
+  & Quarot &  & & 68.96 &79.63 &685 &1734 \\
+  \rowcolor{gray!25}
+  \cellcolor{white} & \textbf{MQuant} &  & & \textbf{81.14} & \textbf{89.75} &\textbf{839} &\textbf{2189} \\
+\midrule
+\rowcolor{gray!12}
+\cellcolor{white}& - & BF16 & BF16 & 82.82 &81.16 &782 &2153 \\
+& RTN &\multirow{4}{*}{W8A8} &\multirow{4}{*}{W4A8}&  7.05 &3.70 &0.00 &140 \\
+  & SQ &  & &  9.05 &4.10 &0.00 &148 \\
+  & Quarot  &  & & 82.00 &80.17 &782 &2115 \\
+  \rowcolor{gray!25}
+  \cellcolor{white}{GLM-4V} & \textbf{MQuant} &  & & \textbf{82.06} &\textbf{80.53} &\textbf{782} &\textbf{2164} \\ \cline{2-8}
+  \cellcolor{white}{-9B}& RTN & \multirow{4}{*}{W4A8} &\multirow{4}{*}{W4A8} &7.61 &3.60 &0.00 &163 \\
+  & SQ &  & &  9.85 &4.40 &0.00 &188 \\
+  & Quarot &  & & 64.16 &45.52 &516 &2048 \\
+  \rowcolor{gray!25}
+  \cellcolor{white} & \textbf{MQuant} &  & & \textbf{81.58} & \textbf{79.67} &\textbf{754} &\textbf{2120} \\
+\midrule
+\rowcolor{gray!12}
+\cellcolor{white}& - & BF16 & BF16 & 84.43 & 93.87 &842 &2319 \\
+& RTN &\multirow{4}{*}{W8A8} &\multirow{4}{*}{W4A8}& 33.92&52.61&442&1298 \\
+  & SQ &  & &  49.11 &53.97 &444 &1500 \\
+  & Quarot  &  & & 79.36 &89.57 &754 &2045 \\
+  \rowcolor{gray!25}
+  \cellcolor{white}{Qwen2-VL} & \textbf{MQuant} &  & & \textbf{84.43} &\textbf{93.61} &\textbf{830} &\textbf{2269} \\ \cline{2-8}
+  \cellcolor{white}{-7B}& RTN & \multirow{4}{*}{W4A8} &\multirow{4}{*}{W4A8} &40.20 &38.82 &422 &1082 \\
+  & SQ &  & &  46.25 &52.36 &411 &1535 \\
+  & Quarot &  & & 71.44 & 83.96 & 670 & 1911 \\
+  \rowcolor{gray!25}
+  \cellcolor{white} & \textbf{MQuant} &  & & \textbf{84.32} & \textbf{93.58} &\textbf{824} &\textbf{2255} \\
+\midrule
+\rowcolor{gray!12}
+\cellcolor{white}& - & BF16 & BF16 & 85.48 &95.95 & 883 &2479\\
+& RTN &\multirow{4}{*}{W8A8} &\multirow{4}{*}{W4A8}&37.21 &40.94 &426 &1444 \\
+  & SQ &  & &  50.33  & 55.41 & 480 & 1601\\
+  & Quarot  &  & & 80.03 & 91.21 & 781 & 2299 \\
+  \rowcolor{gray!25}
+  \cellcolor{white}{Qwen2-VL} & \textbf{MQuant} &  & & \textbf{85.48} &\textbf{95.90} &\textbf{880} &\textbf{2469} \\ \cline{2-8}
+  \cellcolor{white}{-72B}& RTN & \multirow{4}{*}{W4A8} &\multirow{4}{*}{W4A8} &28.21 &25.94 &426 &1137 \\
+  & SQ &  & &  47.11 & 54.95 & 413 & 1586 \\
+  & Quarot &  & & 71.86 & 86.11 & 701 & 2264 \\
+  \rowcolor{gray!25}
+  \cellcolor{white} & \textbf{MQuant} &  & & \textbf{85.03} & \textbf{95.49} &\textbf{868} &\textbf{2471} \\
+\bottomrule
+\end{tabular}
+}
+\vspace{-7mm}
+\end{table}
+
+% \vspace{-2mm}
+
+\vspace{-1mm}
+\noindent\paragraph{\textbf{Models and Datasets}} We evaluate our \emph{MQUANT} on five MLLMs: InternVL2-8B~\citep{internvl15}, Qwen-VL-Chat-9.6B~\citep{qwenvl}, MiniCPM-V 2.6-8B~\citep{yao2024minicpmv}, Qwen2-VL-7B~\citep{Qwen2VL}, and GLM-4V-9B~\citep{CogVLM2}. Evaluations are conducted on four benchmarks covering OCR and general question answering: TextVQA~\citep{singh2019textvqa}, DocVQA~\citep{mathew2021docvqa}, OCRBench~\citep{liu2023ocrbench}, and MME~\citep{fu2023mme}, which assesses perception and cognition across 14 tasks. These MLLMs' details are in Appendix~\ref{MLLMs_comparison}.
+
+\vspace{-1mm}
+\noindent\paragraph{\textbf{Baselines and Implementation Details}} We test W8A8 and W4A8 quantization settings for both visual encoders and LLMs, comparing RTN, SmoothQuant~\citep{xiao2022smoothquant}, and Quarot~\citep{ashkboos2024quarot}. Notably, we apply static per-tensor activation quantization for both components, unlike the dynamic per-token quantization typically used in existing MLLMs. The calibration dataset consists of 256 randomly selected samples from the corresponding benchmark training sets~\citep{singh2019textvqa, mathew2021docvqa, liu2023ocrbench}. The batch size for latency measurement is 1.
+
+\vspace{-1mm}
+\subsection{Overall Results}
+% \vspace{-1mm}
+
+As shown in Table~\ref{table:main_results}, \emph{MQuant} can apply to the quantization of various MLLMs, and demonstrates significant improvements over several representative quantization methods. In W8A8 setting, MQuant achieves near-lossless performance to the FP models across diverse datasets and different model scales (7-72B). Notably, even in the more challenging W4A8 setting, MQuant maintains comparable performance with FP models, while other advanced quantization methods exhibit significant performance degradation. These results indicate that our MQuant provide a general and effective PTQ solution with strong compatibility for maintaining high accuracy in MLLMs under various bits settings across diverse multi-modal reasoning tasks. This suggests MQuant maintains robustness (e.g., stability to typical input or models changes) in these frameworks.
+
+
+\begin{table}[htbp]
+  \centering
+  \caption{Comparison of existing MLLMs Quantization Methods}
+  \label{tab:comp_mllm}
+  \resizebox{1.0\linewidth}{!}{
+  \begin{tabular}{lcccll}
+    \toprule
+    $\textbf{Method}$ & $\textbf{W bits}$ & $\textbf{A bits}$ & $\textbf{Scale}$             & $\textbf{GEMM kernel}$ & $\textbf{Extra ops}$         \\
+    \midrule
+    Q-VLM~\citep{qvlm}           & NF4           & INT4            & per-channel static       & BF16 GEMM          & dequant W\&A               \\
+    QSLAW~\citep{xie2024advancing}           & INT4          & BF16            & weight-only              & BF16 GEMM          & dequant W                  \\
+    MBQ~\citep{li2024mbq}              & INT4          & INT4            & per-token dynamic        & INT4 GEMM          & per token scale \\
+    \rowcolor{myblue!20} MQuant (ours)    & INT4          & INT4            & per-modality static      & INT4 GEMM          & none                       \\
+    \bottomrule
+  \end{tabular}
+  }
+  \vspace{-3mm}
+\end{table}
+
+\begin{table}[htbp]
+  \centering
+  \caption{ScienceQA~\cite{ScienceQA} test Results on LLaVA1.5-13B}
+  \label{tab:SQA}
+  \resizebox{1.0\linewidth}{!}{
+  \begin{tabular}{lcccccclc}
+    \toprule
+    $\textbf{Bits}$ & $\textbf{Method}$     & $\textbf{NAT}$ & $\textbf{SOC}$ & $\textbf{LAN}$ & $\textbf{TXT}$ & $\textbf{IMG}$ & $\textbf{NO}$ & $\textbf{Avg$\uparrow$}$ \\
+    \midrule
+    BF16            & -                   & 90.19      & 93.14      & 87.09      & 89.39      & 87.06      & 89.83     & 90.00                 \\
+    \midrule
+    w4a4          & Q-VLM~\citep{qvlm}               & 82.55      & 73.32      & 83.18      & 81.03      & 70.82      & 86.74     & 80.78                 \\
+    \rowcolor{myblue!20} w4a4          & MQuant              & \textbf{87.07}      & \textbf{85.24}      & \textbf{87.05}      & \textbf{88.49}      & \textbf{85.50}      & \textbf{89.77}     & \textbf{87.18}                 \\ \midrule
+    w4 only       & QSLAW~\citep{xie2024advancing}                & 83.26      & 91.79      & 80.00      & 82.80      & 81.30      & 83.07     & 83.70 \\
+    \rowcolor{myblue!20} w4 only       & MQuant (g=128)       & \textbf{90.21}      & \textbf{91.95}      & \textbf{87.05}      & \textbf{89.20}      & \textbf{86.66}      & \textbf{89.94}     & \textbf{89.16} \\
+    \bottomrule
+  \end{tabular}
+  }
+  \vspace{-3mm}
+\end{table}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Performance Comparison under Different Precision and Methods (T.VQA, D.VQA, OCRB, MME) on Qwen2VL-72B.}
+  \label{tab:MBQ}
+  \resizebox{1.0\linewidth}{!}{
+  \begin{tabular}{lccccc}
+    \toprule
+    $\textbf{Bits}$ & $\textbf{Method}$ & $\textbf{T.VQA$\uparrow$}$ & $\textbf{D.VQA$\uparrow$}$ & $\textbf{OCRB.$\uparrow$}$ & $\textbf{MME$\uparrow$}$ \\
+    \midrule
+    BF16  & - & 85.48 & 95.95 & 883 & 2479 \\
+    W4A8  & MBQ~\citep{li2024mbq}      & 83.41 & 92.30 & 854 & 2402 \\
+    \rowcolor{myblue!20} W4A8  & MQuant (ours)    & \textbf{85.03} & \textbf{95.49} & \textbf{868} & \textbf{2471} \\
+    \bottomrule
+  \end{tabular}
+  }
+  \vspace{-3mm}
+\end{table}
+
+
+\subsection{Comparison with other MLLMs Quantization Methods}
+
+To rigorously evaluate MQuant, we compare it against recent state-of-the-art (SOTA) quantization methods~\citep{qvlm,xie2024advancing, li2024mbq} specifically designed for MLLMs. Table~\ref{tab:comp_mllm} provides a high-level comparison of the quantization schemes. Existing methods often introduce substantial runtime overhead. For example, MBQ~\citep{li2024mbq} employs online dynamic per-token quantization; Q-VLM~\citep{qvlm} and QSLAW~\citep{xie2024advancing} require dequantization and perform GEMM in resource-intensive BF16 precision. In contrast, MQuant is the only method that achieves a fully static, per-modality quantization scheme that is directly compatible with highly efficient \textbf{INT4 GEMM kernels}. This design choice is the foundation of its superior inference speed. Besides, due to their different evaluation benchmark, we compare them on their reported results. The empirical results in Table~\ref{tab:SQA} and Table~\ref{tab:MBQ} confirm MQuant's accuracy advantage. On the ScienceQA benchmark~\cite{ScienceQA} (Table~\ref{tab:SQA}) in LLaVA1.5-13B~\cite{liu2023llava}, our W4A4 MQuant surpasses Q-VLM by a significant margin of \textbf{6.4\%} in average accuracy. In the weight-only setting, MQuant outperforms QSLAW by \textbf{5.46\%}, highlighting the effectiveness of our activation quantization strategy. Similarly, on Qwen2VL-72B\cite{Qwen2VL} (Table~\ref{tab:MBQ}), our W4A8 MQuant achieves near-lossless performance, outperforming MBQ while avoiding its costly per-token dynamic quantization. This superior performance is a direct result of our novel designs. The \textbf{MSQ} effectively handles the distributional disparity between visual and textual tokens, a challenge that other methods do not explicitly address. Furthermore, the \textbf{AIFS} scheme eliminates the need for dynamic scales without compromising model accuracy, enabling the use of fast, hardware-friendly static quantization. Together with \textbf{RMS}, these contributions allow MQuant to achieve both the highest accuracy and the fastest true INT4 inference among existing MLLM quantization methods.
+
+%\paragraph{Multi-round case Experiments.} 
+
+\vspace{-1.5mm}
+\subsection{Ablation Study}
+% \vspace{-2mm}
+In this section, we select Qwen2-VL-7B~\citep{Qwen2VL}, one of the most powerful open-source MLLMs, to validate the effectiveness of our designs.
+
+\begin{table}[h]
+\vspace{-2mm}
+\caption{Ablation study of proposed designs on Qwen2-VL-7B~\cite{Qwen2VL} with W4A8 setting.}
+\vspace{-2mm}
+\label{table:ablation}
+\centering
+\Huge
+\resizebox{\linewidth}{!}{
+\begin{tabular}{ccc|ccccc}
+\toprule
+\multicolumn{3}{c|}{\textbf{Methods}}& \multirow{2}{*}{\textbf{T.VQA$\uparrow$}} & \multirow{2}{*}{\textbf{D.VQA$\uparrow$}} & \multirow{2}{*}{\textbf{OCRB.$\uparrow$}} & \multirow{2}{*}{\textbf{MME$\uparrow$}} & \multirow{2}{*}{\textbf{Lat (ms) $\downarrow$}}\\
+Static& AIFS + MSQ &RMS & \\
+\toprule
+\rowcolor{gray!12}
+\multicolumn{3}{c|}{\textbf{BF16}} & 84.43 &93.87 &842 &2319 &6523\\ \hline
+\cc & \xx &\xx & 71.44 & 83.96 & 670 & 1911 & 5479\\
+\cc & \cc& \xx  & 78.95 & 87.55 & 721 & 2095 &5484\\
+% &  \cc& \cc&  \cc &\xx& & & 82.48 & 91.91 & 803 & 2174 &\textcolor{myblue}{5452}\\
+  \rowcolor{myblue!20}
+\cc& \cc& \cc &\textbf{84.32} &\textbf{93.58} &\textbf{824} &\textbf{2255} &5471\\
+\bottomrule
+\end{tabular}
+}
+\vspace{-3mm}
+\end{table}
+
+\noindent\paragraph{\textbf{Ablation Study of Proposed Quantization Designs}} We perform ablations on Qwen2-VL-7B (Table~\ref{table:ablation}) to isolate the contributions of each quantization component. Beginning with a baseline that applies GPTQ + Hadamard transformations to both the LLM and vision parts with per-tensor static quantization, we progressively introduce \textbf{MSQ+AIFS} for the LLM. This significantly boosts accuracy and latency, highlighting their effectiveness on multimodal input tokens. Next, incorporating \textbf{RMS} to suppress newly arising outliers achieves near-floating-point performance, underscoring the overall robustness and efficiency of our pipeline. We also demonstrate that the design of \textbf{RMS}is also effective for LLMs in Appendix ~\ref{RMS4LLMs}.
+
+% \vspace{-4mm}
+
+
+
+
+\begin{table}[h]
+\vspace{-2mm}
+\caption{Ablation study about calibration dataset size.}
+\vspace{-2mm}
+\label{table:calib_size}
+\centering
+\resizebox{0.8\linewidth}{!}{
+\begin{tabular}{c|cccc}
+\toprule
+\textbf{Calib size}& \textbf{T.VQA$\uparrow$} & \textbf{D.VQA$\uparrow$} & \textbf{OCRB.$\uparrow$} & \textbf{MME$\uparrow$} \\
+\midrule
+BF16 & 84.43 &93.87 &842 &2319\\
+\midrule
+128   &84.28 & 93.50 &820 & 2243 \\ 
+\rowcolor{myblue!20}
+256   &84.32 &93.58 &824  &2255 \\ 
+512   &84.32  &93.57 &823 &2254\\ 
+\bottomrule
+\end{tabular}
+}
+\label{calib_size}
+\vspace{-3mm}
+\end{table}
+
+\vspace{-2mm}
+\noindent\paragraph{\textbf{Selection of Calibration Dataset Size}} Following ~\citep{xiao2022smoothquant,ashkboos2024quarot}, we selected a sample subset to get the statistics of activations during the calibration process. This ensures the calibration data reflects the distribution in each dataset. To assess sensitivity to calibration dataset size of \emph{MQuant}, we conducted experiments on Qwen2-VL-7B, including [128, 256, 512] samples. The Table~\ref{calib_size} shows the consistency of MQuant in W4A8 with loessless accuracy. These results, revised in supplementary, demonstrate that MQuant is largely insensitive to calibration dataset size. We believe this robustness enhances MQuant’s practical applicability. Therefore, we select 256 randomly selected samples from the corresponding benchmark training set. 
+
+\begin{table}[h]
+\vspace{-2mm}
+\caption{Latency combining AIFS with FlashAttention from 100 to 8100 tokens ($Q/K/V$ shape is (1, 28, num-tokens, 128))} %(1,28,100,128)
+\vspace{-2mm}
+\label{table:flash}
+\centering
+\resizebox{\linewidth}{!}{
+\begin{tabular}{c|ccccc}
+\toprule
+Tokens Number& 100 &900 & 2500 & 4900 &8100\\
+\midrule
+FlashAttn (ms) &27.3& 33.6 & 35.5 & 165.9 &271.6\\
+AIFS+FlashAttn (ms) &27.3 & 34.1& 36.4& 167.5 & 272.1\\
+\bottomrule
+\end{tabular}
+}
+\vspace{-3mm}
+\end{table}
+
+\begin{table*}[t]
+\caption{The accuracy and speedup of our MSQ and AIFS scheme on the linear layer during prefill stage. The input sequence is structured as "text-image-text-image-text-image-text" with an image resolution of $2240 \times 2240$ and 50 textual tokens. Latency were tested on an NVIDIA RTX 6000 Ada Generation.}
+% \vspace{+2mm}
+\vspace{-2mm}
+\label{table:AIFS_laten}
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{l|l|cccc|c|c}
+\toprule
+\textbf{Activation}  & \textbf{Weight} &\textbf{T.VQA$\uparrow$} & \textbf{D.VQA$\uparrow$} & \textbf{OCRB.$\uparrow$} & \textbf{MME$\uparrow$}& \textbf{Latency $\downarrow$} (s) & \textbf{Speedup $\uparrow$} \\
+\toprule
+\rowcolor{gray!10}
+BF16 &BF16  &  84.43 &93.87 &842 &2319&1.690 & -\\ \hline
+BF16& W4-g128(AWQ)  &83.93 (-0.50) &93.13 (-0.74) &828 (-14) &2252 (-67) &\textbf{2.057} (+0.367) &\color{myred}{-17.8\% }\\ \hline
+A8-per-token dyn  & \multirow{4}{*}{W4-per-channel sta}& \cellcolor{yellow!7} 84.32 (-0.11)&\cellcolor{yellow!7} 93.61 (-0.26)	&\cellcolor{yellow!7} 830 (-12)&\cellcolor{yellow!5} 2269 (-50) & \cellcolor{yellow!7} 1.253 (-0.437) &\color{mygreen1}{+34.9\%}   \\ %
+A8-per-tensor sta  & &  \cellcolor{yellow!20} 40.20 {(-44.12)} & \cellcolor{yellow!20} 38.82 {(-54.79)}&\cellcolor{yellow!20} 422 {(-408)} &\cellcolor{yellow!20}1082 {(-1187)}&\cellcolor{yellow!20} \textbf{1.016} (\textbf{-0.674}) & \color{mygreen1}{\textbf{+66.3\%}}  \\
+% &  & & & AIFS &1.958 (\textbf{\color{mygreen1}{$\uparrow$22.6\%}})\\
+% \rowcolor{gray!25}
+A8-MSQ & & 84.32 (-0.11)	&93.61 (-0.26) &830 (-12) &2269 (-50)&1.085 (-0.605) & \color{mygreen1}{+55.8\%}\\ \cline{3-8}
+\rowcolor{myblue!20}
+\textbf{A8-MSQ+AIFS} & & \textbf{84.32} (-0.11)	& \textbf{93.61} (-0.26) &\textbf{830} (-12)&\textbf{2269} (-50)& \underline{1.017} (-0.673) & \color{mygreen1}{\textbf{+66.2\%}}\\
+\bottomrule
+\end{tabular}
+}
+% \vspace{-3mm}
+\end{table*}
+
+
+\begin{table*}[h]
+    \vspace{-1mm}
+    \caption{Comparison of latency and memory saving with Pytorch (BF16), AWQ (W4-only) and MQuant (W4A8) on Qwen2-VL-7B. $\downarrow$ means lower values are better, $\uparrow$ means larger values are better.}
+    \vspace{-4.5mm}
+    \label{tab:ablation2}
+    \centering
+    \resizebox{\textwidth}{!}{
+        \begin{tabular}{c>{\columncolor{gray!15}}c|>{\columncolor{blue!2}}c>{\columncolor{blue!2}}c|>{\columncolor{myblue!15}}c>{\columncolor{myblue!15}}c|>{\columncolor{gray!15}}c|>{\columncolor{blue!2}}c>{\columncolor{blue!2}}c|>{\columncolor{myblue!15}}c>{\columncolor{myblue!15}}c}\\
+        \toprule 
+        Image size & \multicolumn{5}{c|}{Latency (s)}& \multicolumn{5}{c}{Memory (G)}\\ \cline{2-11}
+        
+          H $\times$ W & Pytorch& AWQ$\downarrow$ & Speedup$\uparrow$ & MQuant$\downarrow$& Speedup$\uparrow$ & Pytorch & AWQ$\downarrow$ & Improve$\uparrow$ & MQuant$\downarrow$  & Improve$\uparrow$\\ \cline{2-11}
+        840$^2$ & 0.261  &0.304 (+0.043) &\color{myred}{-14.14\%} &0.210 (-0.051) &\textbf{\color{mygreen1}{+24.76\%}}&16.45 &7.45 (-9.00)&\color{mygreen1}{+120.67\%}&6.50 (-9.95) &\textbf{\color{mygreen1}{+152.92\%}}\\
+        1960$^2$ & 1.369  &1.598 (+0.229) &\color{myred}{-14.26\%} &1.112 (-0.257) & \textbf{\color{mygreen1}{+16.63\%}} &17.82 &8.82 (-9.00)&\color{mygreen1}{+100.00\%} &7.85 (-9.97)  &\textbf{\color{mygreen1}{+119.93\%}}\\
+        3080$^2$ & 5.208  &5.872 (+0.664) &\color{myred}{-11.27\%} &4.488 (-0.720) &\textbf{\color{mygreen1}{+16.02\%}} &20.58 &11.58 (-9.00)&\color{mygreen1}{+77.60\%}&10.61 (-9.97) &\textbf{\color{mygreen1}{+96.45\%}}\\
+        5600$^2$ & 8.380  &9.393 (+1.013) &\color{myred}{-10.78\%} &7.469  (-0.911)&\textbf{\color{mygreen1}{+12.19\%}} &22.22 &13.22 (-9.00)&\color{mygreen1}{+57.54\%}&12.25 (-9.97) &\textbf{\color{mygreen1}{+61.65\%}}\\
+            \hline
+            \end{tabular}  
+        }
+\label{tab:speedup}
+\vspace{-1mm}
+\end{table*}
+
+
+\vspace{-2mm}
+\noindent\paragraph{\textbf{Integrate AIFS with Flash Attention}} As evidenced in Table~\ref{table:flash}, we integrated the causal attention mechanism of AIFS into FlashAttention and tested it on an RTX 6000, observing that its speed is nearly identical to that of standard causal attention. The results demonstrates seamless integration MBQ+AIFS with Flash Attention, exhibiting negligible latency overhead (<0.3\% across all tested token lengths). The minimal performance gap (maximum 1.6 ms) stems from two key design choices: (1) AIFS's token reordering operates exclusively in the preprocessing phase without interfering with core attention computation, and (2) our metadata propagation mechanism (visual token indices m/n) preserves Flash Attention's native memory access patterns. Notably, the 0.96\% latency increase at 4,900 tokens validates strong scalability for high-resolution inputs. This highlight the hardware compliance advantages of MBQ and AIFS designs: CUDA-aligned token layouts enable binary compatibility with FlashAttention kernels, which is particularly effective for real-time processing of high-resolution multimodal inputs.
+
+
+\begin{figure}[h]
+    \centering    
+    \includegraphics[width=\linewidth]{figures/RMS_outliers_qwenvl2.pdf}
+    \vspace{-5mm}
+    \caption{Illustration the weight distributions for the down-proj layer (block 21) in Qwen2VL-7B's visual encoder under three conditions: (a) original weight, (b) weights after FHT, and (c) weights after FHT with our RMS. More resutls refer to Appendix~\ref{weight_distritbuion}} 
+    \label{fig:RMS_weight_ablation}
+\vspace{-3mm}
+\end{figure}
+
+
+\paragraph{\textbf{Weight Distribution with Rotation Magnitude Suppression (RMS)}} As shown in Fig. ~\ref{fig:RMS_weight_ablation}, we visualizes the magnitude of weights outliers without (w/o) and with (w/) RMS. The weight distribution reveals that FHT amplification increases weight magnitudes, while RMS effectively reduces these magnitudes by a factor of 1.0 to 0.1, significantly improving quantization stability (Other distribution are in Appendix~\ref{weight_distritbuion}). This is also consistent with our ablation results, shown that RMS significantly enhances performance for both MLLMs (Table ~\ref{table:ablation}).  Taking Qwen2-VL as example, the vision encoder's down-projection layer (3584×1280, $C\_in * C\_out$) and LLM's corresponding layer (18944×3584) demonstrate the efficiency of our approach. The RMS implementation converts a W4A8 GEMM operation into a combined W4A8 GEMM + W4A8 GEMV computation, where the GEMV is selectively applied only to affected channels. This introduces negligible overhead, precisely 1/3584 and 1/18944 of the total computation for vision and LLMs parts. 
+
+\begin{figure}[h]
+    \centering    
+    \includegraphics[width=\linewidth]{figures/AIFS_speedup.pdf}
+    \vspace{-2mm}
+    \caption{The Speedup of AIFS+MSQ on Qwen2-VL-7B.}
+    \label{fig:AIFS_speed}
+    \vspace{-2mm}
+\end{figure}
+
+\noindent\paragraph{\textbf{Accuracy \& Speedup of AIFS}} While \textbf{MSQ} addresses the modality discrepancy, \textbf{AIFS} further reorders visual and textual tokens into a unified sequence to enable efficient per-tensor static quantization of activations. Table~\ref{table:AIFS_laten} shows that \textbf{MSQ}+\textbf{AIFS} not only achieves the same speedup as naïve per-tensor static quantization but also maintains near-floating-point accuracy across linear layers. Figure~\ref{fig:AIFS_speed} further illustrates that \textbf{AIFS} yields speedups of \textbf{20\%--80\%} as resolution increases, corroborating that rearranging tokens avoids the high overhead of dynamic per-token quantization. 
+
+\vspace{-2mm}
+\subsection{Latency and Memory Analysis}
+We evaluate \textbf{MQuant}'s performance across three key metrics: (1) inference speedup, (2) memory efficiency (tested over image resolutions from $280^2$-$5600^2$), and (3) decoding acceleration. All experiments employ the established ''\textit{text-image-text}'' input format in~\citep{duan2024vlmevalkit} with a fixed 15 textual tokens unless explicitly varied.
+
+\begin{table}[h]
+\vspace{-2mm}
+\caption{Speedup of MSQ + AIFS on W4A8 setting.}
+\vspace{-2mm}
+\label{tab:speed_decode}
+\centering
+\Huge
+\resizebox{\linewidth}{!}{
+\begin{tabular}{ccccc|c}
+\toprule
+\textbf{Stage} & \textbf{BF16} & \textbf{Per-token Dyn.} & \textbf{Ours} & \textbf{Ours + GEMV} & \textbf{Speedup} \\ 
+\toprule
+\textbf{Prefill} & 1690 & 1253 & 1017 & - & \cellcolor{myblue!15} \color{mygreen1}{\textbf{+23\%}} \\
+\textbf{Decode} & 17.5 & 16.4 & 13.06 & 8.2 & \cellcolor{myblue!15} \color{mygreen1}{\textbf{+100\%}} \\
+\bottomrule
+\end{tabular}
+}
+\vspace{-4mm}
+\end{table}
+
+\vspace{-2mm}
+\noindent\paragraph{\textbf{Inference Speedup and Memory Savings}}
+\textbf{\raisebox{-0.5pt}{\ding[1.1]{182\relax}} Overall Speedup} As shown in Table~\ref{tab:speedup}, \textbf{MQuant} surpasses BF16 and AWQ (W4-only) across all image resolutions, achieving up to \textbf{24.76\%} speedup over PyTorch at $840\times 840$. Even at higher resolutions (e.g., $5600^2$), \textbf{MQuant} maintains a \textbf{12.19\%} latency improvement, demonstrating scalability. \textbf{\raisebox{-0.5pt}{\ding[1.1]{183\relax}} Memory Efficiency.} Our method provides memory savings over both BF16 and AWQ, with reductions exceeding \textbf{100\%} compared to PyTorch (e.g., \textbf{152.92\%} at $840^2$). These benefits primarily arise from (1)~eliminating the overhead of token-wise scale computation, and (2)~converting mixed tokens into modality-decoupled tokens, avoiding slicing and concatenation when image resolutions become large. More resolution experiments are in Appendix ~\ref{Speed_mem_image}. \textbf{\raisebox{-0.5pt}{\ding[1.1]{184\relax}} Decoding Acceleration.} We also measure decode time for generating 2{,}000 tokens with a custom W4A8 \texttt{GEMV} kernel (Table \ref{tab:speed_decode}). Compared to per-token dynamic quantization, our \textbf{AIFS}+\textbf{MSQ} framework gains \textbf{23\%} speedup in the prefill stage and \textbf{100\%} speedup in decode stage. By shifting online per-toekn dynamic quantization to an offline per-tensor static approach, we greatly reduce inference overhead, especially for long-sequence tasks. Moreover, since visual tokens are generally pricier than textual ones~\citep{duan2024vlmevalkit}, these improvements translate to notable real-world cost reductions (e.g., $\approx30\%$ for OpenAI token pricing).
+
+
+
+\begin{table*}[t]
+\vspace{-1mm}
+\caption{Multi-Batch speedup comparison of MSQ + AIFS on W4A8 setting. Each row shows the cumulative total of text tokens, images, and textual responses for multi-turn inference.}
+\vspace{-2mm}
+\label{tab:speed_multibatch}
+\centering
+\Huge
+\resizebox{\linewidth}{!}{
+\begin{tabular}{c|ccc|cc|c|cc|c|cc|c}
+\toprule
+\multirow{2}{*}{\textbf{Batch}} 
+& \multicolumn{3}{c|}{\textbf{Config (Text+Image+Text)}} 
+& \multicolumn{2}{c|}{\textbf{Prefill (s)}} 
+& \multirow{2}{*}{\textbf{Improve$\uparrow$}} 
+& \multicolumn{2}{c|}{\textbf{Decode (s)}}  
+& \multirow{2}{*}{\textbf{Improve$\uparrow$}} 
+& \multicolumn{2}{c|}{\textbf{All (s)}}  
+& \multirow{2}{*}{\textbf{Improve$\uparrow$}} \\
+& \textbf{Text} & \textbf{Image} & \textbf{Text} 
+& \textbf{bfp16} & \textbf{MQuant} & 
+& \textbf{bfp16} & \textbf{MQuant} & 
+& \textbf{bfp16} & \textbf{MQuant} & \\
+\midrule
+1 & 10 & 2240$\times$2240 & 50 
+  & 2.54 & 1.93 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+31.6\%}} 
+  & 18.01 & 12.89 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+39.7\%}}  
+  & 20.55 & 14.82 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+38.7\%}}  \\
+2 & 10/10 & 2240$\times$2240 / 2240$\times$2240 & 50/100 
+  & 5.42 & 4.15 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+30.6\%}} 
+  & 37.82 & 31.56 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+19.8\%}} 
+  & 43.24 & 35.71 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+21.1\%}} \\
+3 & 10/10/10 & 2240$\times$2240 / 2240$\times$2240 / 2240$\times$2240 & 50/100/150 
+  & 8.24 & 6.42 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+28.3\%}} 
+  & 48.03 & 40.35 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+19.0\%}} 
+  & 56.27 & 46.77 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+20.3\%}} \\
+4 & 10/10/10/10 & 2240$\times$2240 / 2240$\times$2240 / 2240$\times$2240 / 2240$\times$2240 & 50/100/150/200 
+  & 11.17 & 8.67 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+28.9\%}} 
+  & 59.09 & 49.92 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+8.4\%}}
+  & 70.26 & 58.59 & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+20.0\%}} \\
+\bottomrule
+\end{tabular}
+}
+\vspace{-2mm}
+\end{table*}
+
+
+
+\begin{table}[h]
+\vspace{-2mm}
+\caption{Latency comparison under multi-turns setting.}
+\vspace{-2mm}
+\label{table:multi-turns-comparison}
+\centering
+\resizebox{\linewidth}{!}{
+\begin{tabular}{c|ccc|cc|c}
+\toprule
+\multirow{2}{*}{\textbf{Turns}}  & \multicolumn{3}{c|}{\textbf{Config in one Turn}} & \multicolumn{2}{c|}{\textbf{All(s)}} & \multirow{2}{*}{\textbf{Improve $\uparrow$}} \\
+               & \textbf{Text} & \textbf{Image} & \textbf{Text} & \textbf{bfp16} & \textbf{Ours} & \textbf{} \\ 
+\midrule
+1              & 10              & 2240x2240               &  50             & 20.55         & 14.82         & \cellcolor{myblue!15}\color{mygreen1}{\textbf{+38.7\%}} \\ 
+2              & 10            & 2240x2240      & 50            & 44.06         & 32.61         & \cellcolor{myblue!15} \color{mygreen1}{\textbf{+35.1\%}} \\ 
+3              & 10            & 2240x2240      & 50            & 76.67         & 59.48         & \cellcolor{myblue!15} \color{mygreen1}{\textbf{+28.9\%}} \\ 
+\bottomrule
+\end{tabular}
+}
+\vspace{-2mm}
+\end{table}
+
+
+
+
+
+
+
+
+\vspace{-2mm}
+\noindent\paragraph{\textbf{Acceleration for Multi-batch and Multi-turn Inference}} \textbf{\raisebox{-0.5pt}{\ding[1.1]{182\relax}} For multi-batch scenarios}, we use 2240$\times$2240 resolution images with ”text-image-text” inputs, we evaluate batches containing 50-200 text tokens while generating 512 decoded tokens. Sequence alignment employs left-padding (\texttt{pad\_token\_id}) with proper masking (see Appendix A.4). AIFS maintains full multi-batch compatibility without overhead, enabling consistent 20\% faster inference versus FP baselines across batch sizes 1-4 (Table~\ref{tab:speed_multibatch}). \textbf{\raisebox{-0.5pt}{\ding[1.1]{183\relax}} For multi-turn dialogue}, under identical resolution and input format (50 text tokens per turn + 512 decoded tokens), MQuant achieves 38.7\% faster end-to-end inference than BF16 for 1-3 turns (Table~\ref{table:multi-turns-comparison}) through optimized key-value caches and position IDs across turns. %we preserve context during the dialogue. In Table~\ref{table:multi-turns-comparison}, MQuant reduces end-to-end inference time by up to 38.7\% over the BF16 baseline for 1-3 turns, showing the \emph{MQuant}'s efficiency in multi-turn settings.
+
+\begin{table}[h]
+\vspace{-2mm}
+\caption{Comparison under weight-only settings on Qwen2-VL-7B~\citep{Qwen2VL}. ${\dagger}$ means re-implementation based on the official weight-only setting with a group size of 128.}
+\vspace{-2mm}
+\label{table:weight-only}
+\centering
+\Huge
+\resizebox{\linewidth}{!}{
+\begin{tabular}{c|cc|cccc}
+\toprule
+\multirow{2}{*}{\textbf{Method}}& \multicolumn{2}{c|}{\textbf{Bits Setting}} & \multirow{2}{*}{\textbf{T.VQA $\uparrow$}} & \multirow{2}{*}{\textbf{D.VQA $\uparrow$}} & \multirow{2}{*}{\textbf{OCRB.$\uparrow$}} & \multirow{2}{*}{\textbf{MME$\uparrow$}} \\
+& Visual & LLM & \\
+\toprule
+\rowcolor{gray!10}
+- & BF16 & BF16 & 84.43 &93.87 &842 &2319\\
+GPTQ (g128)$^{\dagger}$  &BF16 &W8& 84.33 &93.97 &842 &2313 \\
+GPTQ (g128)$^{\dagger}$ &BF16 &W4& 84.18 &93.25 &831 &2285 \\
+ AWQ (g128)$^{\dagger}$ &BF16 &W4 &  83.93 &93.13 &828 &2252 \\ \cline{1-7} 
+% \hline
+\rowcolor{gray!15}
+\textbf{MQuant} (g128)  & BF16 &W4 & 84.55 &93.18 &\textbf{832} &\textbf{2304} \\ \cline{1-7}
+% \hline
+  \rowcolor{gray!25}
+\textbf{MQuant} (g128) & W4 &W4& \textbf{84.70} &\textbf{93.57} &828 &2292 \\ \cline{1-7}
+  \rowcolor{myblue!20}
+\textbf{MQuant} & W4A8 &W4A8& 84.32 & 93.58 &824 &2255 \\
+\bottomrule
+\end{tabular}}
+\vspace{-2mm}
+\end{table}
+
+
+
+\vspace{-2mm}
+\noindent\paragraph{\textbf{Weight-only Quantization}} We evaluate our weight-only quantization using GPTQ~\citep{frantar2022gptq} and AWQ~\citep{lin2023awq} under consistent settings (group size=128), quantizing only the LLM while keeping the visual encoder in BF16. As shown in Table ~\ref{table:weight-only}, our W4 LLM quantization achieves near-lossless accuracy comparable to existing methods. When extended to W4 quantization, MQuant maintains comparable performance with the BF16 baseline. The W4A8 quantization similarly shows competitive or superior results compared to weight-only approaches. These experiments validate MQuant's effectiveness across: (1) weight-only vs. weight-activation schemes, and (2) partial vs. full-model quantization scenarios.
+
