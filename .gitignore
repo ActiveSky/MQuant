@@ -2,3 +2,5 @@
 weights/
 output/
 log
+
+fast-hadamard-transform/
