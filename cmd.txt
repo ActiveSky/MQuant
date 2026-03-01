@@ -1,0 +1,2 @@
+watch -n 2 --color gpustat --c
+Licc@31103.yuxinan

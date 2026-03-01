@@ -12,17 +12,21 @@ torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 
 
-def qwenvl_visual_clip_rtn(model, dev, args):
+def qwenvl_visual_clip_rtn(model, dev, args, g_cache=None):
     # visiual conv1
     quantizer = quant_utils.WeightQuantizer()
     quantizer.configure(
         args.visual_w_bits,
         perchannel=True,
+        nuq=args.w_nuq,
         sym=not (args.w_asym),
         mse=args.visual_w_clip,
     )
     W = model.transformer.visual.conv1.module.weight.data
-    quantizer.find_params(W)
+    g = quant_utils.get_weight_importance_for_module(
+        model.transformer.visual.conv1.module, W, g_cache
+    )
+    quantizer.find_params(W, g=g)
     model.transformer.visual.conv1.module.weight.data = quantizer.quantize(W).to(
         model.transformer.visual.conv1.module.weight.dtype
     )
@@ -50,11 +54,13 @@ def qwenvl_visual_clip_rtn(model, dev, args):
             quantizer.configure(
                 layer_weight_bits,
                 perchannel=True,
+                nuq=args.w_nuq,
                 sym=not (args.w_asym),
                 mse=args.visual_w_clip,
             )
             W = subset[name].weight.data
-            quantizer.find_params(W)
+            g = quant_utils.get_weight_importance_for_module(subset[name], W, g_cache)
+            quantizer.find_params(W, g=g)
             subset[name].weight.data = quantizer.quantize(W).to(
                 next(iter(layer.parameters())).dtype
             )
@@ -262,7 +268,7 @@ def gptq_fwrd_visual_clip_resblocks(model, dataset, dev, args, quantizers):
     return quantizers
 
 
-def qwenvl_visual_cross_attention_rtn(model, dev, args):
+def qwenvl_visual_cross_attention_rtn(model, dev, args, g_cache=None):
     subset = quant_utils.find_qlayers(
         model.transformer.visual.attn_pool, layers=[torch.nn.Linear]
     )
@@ -278,11 +284,13 @@ def qwenvl_visual_cross_attention_rtn(model, dev, args):
         quantizer.configure(
             layer_weight_bits,
             perchannel=True,
+            nuq=args.w_nuq,
             sym=not (args.w_asym),
             mse=args.visual_w_clip,
         )
         W = subset[name].weight.data
-        quantizer.find_params(W)
+        g = quant_utils.get_weight_importance_for_module(subset[name], W, g_cache)
+        quantizer.find_params(W, g=g)
         subset[name].weight.data = quantizer.quantize(W).to(subset[name].weight.dtype)
 
     #  quant proj_fc weight
@@ -290,11 +298,13 @@ def qwenvl_visual_cross_attention_rtn(model, dev, args):
     quantizer.configure(
         layer_weight_bits,
         perchannel=True,
+        nuq=args.w_nuq,
         sym=not (args.w_asym),
         mse=args.visual_w_clip,
     )
     W = model.transformer.visual.proj_fc.weight.data
-    quantizer.find_params(W)
+    g = quant_utils.get_weight_importance_for_module(model.transformer.visual.proj_fc, W, g_cache)
+    quantizer.find_params(W, g=g)
     model.transformer.visual.proj_fc.weight.data = quantizer.quantize(W).to(
         model.transformer.visual.proj_fc.weight.dtype
     )
@@ -447,7 +457,7 @@ def gptq_fwrd_visual_clip_cross_attention(model, dataset, dev, args, quantizers)
     print("-----GPTQ Quantization visual clip cross attention Done-----")
 
 
-def qwenvl_llm_rtn(model, dev, args):
+def qwenvl_llm_rtn(model, dev, args, g_cache=None):
     """
     From GPTQ repo
     """
@@ -468,11 +478,13 @@ def qwenvl_llm_rtn(model, dev, args):
             quantizer.configure(
                 layer_weight_bits,
                 perchannel=True,
+                nuq=args.w_nuq,
                 sym=not (args.w_asym),
                 mse=args.llm_w_clip,
             )
             W = subset[name].weight.data
-            quantizer.find_params(W)
+            g = quant_utils.get_weight_importance_for_module(subset[name], W, g_cache)
+            quantizer.find_params(W, g=g)
             subset[name].weight.data = quantizer.quantize(W).to(
                 next(iter(layer.parameters())).dtype
             )
@@ -623,22 +635,44 @@ def qwenvl_rtn_gptq_fwrd_plus(model, dataset, dev, args):
     """
     logging.info("-----RTN Or GPTQ Quantization-----")
     quantizers = dict()
+    weight_g_cache = None
+    uses_gptq_path = (
+        (args.quant_visual_clip and not args.visual_w_rtn)
+        or (args.quant_cross_attention and not args.visual_w_rtn)
+        or (args.quant_llm and not args.llm_w_rtn)
+    )
+    if args.w_nuq and uses_gptq_path:
+        raise ValueError(
+            "--w_nuq currently supports RTN-only weight quantization. "
+            "Disable --w_nuq or enable *_w_rtn for all quantized modules."
+        )
+    need_independent_g = args.w_nuq and (
+        (args.quant_visual_clip and args.visual_w_rtn)
+        or (args.quant_cross_attention and args.visual_w_rtn)
+        or (args.quant_llm and args.llm_w_rtn)
+    )
+    if need_independent_g:
+        if dataset is None:
+            raise ValueError("NUQ RTN requires calibration dataset to estimate g.")
+        weight_g_cache = quant_utils.collect_weight_importance_from_dataset(
+            model, dataset, args, dataset_name=args.dataset_name, nsamples=args.nsamples
+        )
     if args.quant_visual_clip:
         if args.visual_w_rtn:
-            qwenvl_visual_clip_rtn(model.model, dev, args)
+            qwenvl_visual_clip_rtn(model.model, dev, args, g_cache=weight_g_cache)
         else:
             gptq_fwrd_visual_clip_conv1(model, dataset, dev, args, quantizers)
             gptq_fwrd_visual_clip_resblocks(model, dataset, dev, args, quantizers)
 
     if args.quant_cross_attention:
         if args.visual_w_rtn:
-            qwenvl_visual_cross_attention_rtn(model.model, dev, args)
+            qwenvl_visual_cross_attention_rtn(model.model, dev, args, g_cache=weight_g_cache)
         else:
             gptq_fwrd_visual_clip_cross_attention(model, dataset, dev, args, quantizers)
 
     if args.quant_llm:
         if args.llm_w_rtn:
-            qwenvl_llm_rtn(model.model, dev, args)
+            qwenvl_llm_rtn(model.model, dev, args, g_cache=weight_g_cache)
         else:
             gptq_fwrd_llm(model, dataset, dev, args, quantizers)
     return quantizers

@@ -146,11 +146,22 @@ def main(args):
             print("Loading GPTQ model from: ", args.load_gptq)
             model.model = torch.load(args.load_gptq)
         else:
-            # from torch.utils.data import ConcatDataset
-            from vlmeval.dataset import build_dataset
+            dataset = None
+            need_dataset_for_gptq = (
+                (args.quant_visual_clip and not args.visual_w_rtn)
+                or (args.quant_cross_attention and not args.visual_w_rtn)
+                or (args.quant_llm and not args.llm_w_rtn)
+            )
+            need_dataset_for_nuq_rtn = args.w_nuq and (
+                (args.quant_visual_clip and args.visual_w_rtn)
+                or (args.quant_cross_attention and args.visual_w_rtn)
+                or (args.quant_llm and args.llm_w_rtn)
+            )
+            if need_dataset_for_gptq or need_dataset_for_nuq_rtn:
+                from vlmeval.dataset import build_dataset
 
-            dataset = build_dataset(args.dataset_name)
-            model.set_dump_image(dataset.dump_image)
+                dataset = build_dataset(args.dataset_name)
+                model.set_dump_image(dataset.dump_image)
 
             quantizers = gptq.qwen2vl_rtn_gptq_fwrd_plus(
                 model, dataset, utils.DEV, args.dataset_name, args
@@ -172,11 +183,13 @@ def main(args):
                 layer_input_bits = args.visual_a_bits
                 layer_groupsize = args.a_groupsize
                 layer_a_sym = not (args.a_asym)
+                layer_a_nuq = args.a_nuq
                 layer_a_clip = args.a_clip_ratio
 
                 qlayers[name].quantizer.configure(
                     bits=layer_input_bits,
                     groupsize=layer_groupsize,
+                    nuq=layer_a_nuq,
                     sym=layer_a_sym,
                     clip_ratio=layer_a_clip,
                     act_per_tensor=args.act_per_tensor,
@@ -195,12 +208,14 @@ def main(args):
                     continue
                 layer_input_bits = args.llm_a_bits
                 layer_groupsize = args.a_groupsize
+                layer_a_nuq = args.a_nuq
                 layer_a_sym = not (args.a_asym)
                 layer_a_clip = args.a_clip_ratio
 
                 qlayers[name].quantizer.configure(
                     bits=layer_input_bits,
                     groupsize=layer_groupsize,
+                    nuq=layer_a_nuq,
                     sym=layer_a_sym,
                     clip_ratio=layer_a_clip,
                     act_per_tensor=args.act_per_tensor,
@@ -298,6 +313,12 @@ if __name__ == "__main__":
         help="Groupsize for activation quantization. Note that this should be the same as w_groupsize",
     )
     parser.add_argument(
+        "--a_nuq",
+        action="store_true",
+        default=False,
+        help="Non-uniform Activation quantization (default: False)",
+    )
+    parser.add_argument(
         "--a_asym",
         action="store_true",
         default=False,
@@ -334,6 +355,12 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="ASymmetric weight quantization (default: False)",
+    )
+    parser.add_argument(
+        "--w_nuq",
+        action="store_true",
+        default=False,
+        help="Non-uniform weight quantization (RTN-only; default: False)",
     )
     parser.add_argument(
         "--visual_w_rtn",

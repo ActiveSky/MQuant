@@ -1,6 +1,7 @@
 import math
 import transformers
 import torch
+import torch.nn.functional as F
 import os
 from fake_quant import utils
 from fake_quant import hadamard_utils
@@ -52,6 +53,51 @@ def sym_dequant(q, scale):
 def sym_quant_dequant(x, scale, maxq):
     return sym_dequant(*sym_quant(x, scale, maxq))
 
+def nu_quant(x, lut):
+    # This function quantizes x using the provided LUT. It assumes that the LUT is sorted in ascending order.
+    # The quantized value for each element in x is the index of the closest value in the LUT.
+    if lut.dim() == 2:
+        orig_shape = x.shape
+        x_2d = x.reshape(-1, x.shape[-1]).to(lut.device)
+        out = torch.empty_like(x_2d, dtype=torch.long)
+        for i in range(x_2d.shape[0]):
+            boundaries = (lut[i][:-1] + lut[i][1:]) / 2
+            out[i] = torch.bucketize(x_2d[i], boundaries)
+        return out.reshape(orig_shape)
+    else:
+        x = x.to(lut.device)
+        boundaries = (lut[:-1] + lut[1:]) / 2
+        q = torch.bucketize(x, boundaries)
+        return q
+
+def nu_dequant(q, lut):
+    # This function dequantizes q using the provided LUT. It simply replaces each quantized index with the corresponding value in the LUT.
+    if lut.dim() == 2:
+        orig_shape = q.shape
+        q_2d = q.reshape(-1, q.shape[-1]).to(lut.device)
+        out = torch.empty_like(q_2d, dtype=lut.dtype)
+        for i in range(q_2d.shape[0]):
+            out[i] = lut[i][q_2d[i]]
+        return out.reshape(orig_shape)
+    else:
+        q = q.to(lut.device)
+        return lut[q]
+
+def nu_quant_dequant(x, lut):
+    if lut.dim() == 2:
+        orig_shape = x.shape
+        x_2d = x.reshape(-1, x.shape[-1]).to(lut.device)
+        out = torch.empty_like(x_2d)
+        for i in range(x_2d.shape[0]):
+            boundaries = (lut[i][:-1] + lut[i][1:]) / 2
+            q = torch.bucketize(x_2d[i], boundaries)
+            out[i] = lut[i][q]
+        return out.reshape(orig_shape)
+    else:
+        x = x.to(lut.device)
+        boundaries = (lut[:-1] + lut[1:]) / 2
+        q = torch.bucketize(x, boundaries)
+        return lut[q]
 
 def two_compl(x, bits: int):
     return torch.where(x < 0, 2**bits + x, x)
@@ -105,6 +151,7 @@ class ActQuantizer(torch.nn.Module):
         self.register_buffer("maxq", torch.tensor(0))
         self.register_buffer("scale", torch.zeros(1))
         self.register_buffer("zero", torch.zeros(1))
+        self.register_buffer("lut", torch.zeros(1))
         self.bits = 16
         self.act_per_tensor = act_per_tensor
         self.static = False
@@ -112,6 +159,7 @@ class ActQuantizer(torch.nn.Module):
     def free(self):
         self.zero = None
         self.scale = None
+        self.lut = None
 
     def forward(self, x):
         if self.static:
@@ -128,13 +176,17 @@ class ActQuantizer(torch.nn.Module):
             x_dtype = x.dtype
             if self.bits == 16:
                 return x
+            elif self.nuq:
+                return nu_quant_dequant(x, self.lut).to(x_dtype)
             elif self.sym:
                 return sym_quant_dequant(x, self.scale, self.maxq).to(x_dtype)
             return asym_quant_dequant(x, self.scale, self.zero, self.maxq).to(x_dtype)
 
     # Different from `forward`, this method returns quantized integers, scales (and zeros if asymmetric).
     def quantize(self, x):
-        if self.sym:
+        if self.nuq:
+            return nu_quant(x, self.lut)
+        elif self.sym:
             return sym_quant(x, self.scale, self.maxq)
         else:
             return asym_quant(x, self.scale, self.zero, self.maxq)
@@ -143,6 +195,7 @@ class ActQuantizer(torch.nn.Module):
         self,
         bits,
         groupsize=-1,
+        nuq=False,
         sym=False,
         clip_ratio=1.0,
         act_per_tensor=False,
@@ -153,6 +206,7 @@ class ActQuantizer(torch.nn.Module):
         _, self.maxq = get_minq_maxq(bits, sym)
         self.bits = bits
         self.groupsize = groupsize
+        self.nuq = nuq
         self.sym = sym
         self.clip_ratio = clip_ratio
         self.act_per_tensor = act_per_tensor
@@ -171,8 +225,9 @@ class ActQuantizer(torch.nn.Module):
                 bit_type_a,
                 calibration_mode,
             )
+            quantizer_type = "non_uniform" if self.nuq else "uniform"
             self.quantizer = build_quantizer(
-                "uniform", bit_type_a, self.observer, module_a_type
+                quantizer_type, bit_type_a, self.observer, module_a_type
             )
             self.calibrate = False
             self.last_calibrate = False
@@ -202,7 +257,7 @@ class ActQuantizer(torch.nn.Module):
         self.scale = self.scale.repeat(1, 1, 1, self.groupsize).reshape(init_shape)
         self.zero = self.zero.repeat(1, 1, 1, self.groupsize).reshape(init_shape)
 
-    def find_params(self, x):
+    def find_params(self, x, g=None):
         if self.bits == 16:
             return
 
@@ -210,8 +265,49 @@ class ActQuantizer(torch.nn.Module):
         self.maxq = self.maxq.to(dev)
 
         init_shape = x.shape
-
-        if self.act_per_tensor:
+        if self.nuq:
+            if self.act_per_tensor:
+                flat_x = x.flatten()
+                flat_g = g.flatten() if g is not None else torch.ones_like(flat_x)
+                self.lut = non_uniform_lut(flat_x, flat_g, self.bits, device=dev).to(dev)
+            elif self.groupsize > 0:
+                # group-wise per-token quantization
+                reshaped_x = x.reshape(
+                    -1, x.shape[-2], x.shape[-1] // self.groupsize, self.groupsize
+                )
+                reshaped_g = (
+                    g.reshape(-1, g.shape[-2], g.shape[-1] // self.groupsize, self.groupsize)
+                    if g is not None
+                    else None
+                )
+                luts = []
+                for i in range(reshaped_x.shape[0]):
+                    for j in range(reshaped_x.shape[1]):
+                        for k in range(reshaped_x.shape[2]):
+                            gi = (
+                                reshaped_g[i, j, k].flatten()
+                                if reshaped_g is not None
+                                else torch.ones_like(reshaped_x[i, j, k].flatten())
+                            )
+                            luts.append(
+                                non_uniform_lut(
+                                    reshaped_x[i, j, k].flatten(),
+                                    gi,
+                                    self.bits,
+                                    device=dev,
+                                )
+                            )
+                self.lut = torch.stack(luts, dim=0).to(dev)  # (num_groups, 2^bits)
+            else:
+                # per-token: each token gets its own LUT
+                reshaped_x = x.reshape((-1, x.shape[-1]))
+                luts = []
+                for i in range(reshaped_x.shape[0]):
+                    gi = g.reshape(-1, g.shape[-1])[i] if g is not None else torch.ones_like(reshaped_x[i])
+                    luts.append(non_uniform_lut(reshaped_x[i], gi, self.bits, device=dev))
+                self.lut = torch.stack(luts, dim=0).to(dev)  # (num_tokens, 2^bits)
+            return
+        elif self.act_per_tensor:
             tmp = torch.tensor(0).to(x)
             xmin = torch.minimum(x.min(), tmp) * self.clip_ratio
             xmax = torch.maximum(x.max(), tmp) * self.clip_ratio
@@ -420,11 +516,13 @@ class WeightQuantizer(torch.nn.Module):
         self.register_buffer("maxq", torch.tensor(0))
         self.register_buffer("scale", torch.zeros(shape))
         self.register_buffer("zero", torch.zeros(shape))
+        self.register_buffer("lut", torch.zeros(1))
 
     def configure(
         self,
         bits,
         perchannel=False,
+        nuq=False,
         sym=True,
         mse=False,
         norm=2.4,
@@ -433,6 +531,7 @@ class WeightQuantizer(torch.nn.Module):
     ):
         self.bits = bits
         self.perchannel = perchannel
+        self.nuq = nuq
         self.sym = sym
         self.mse = mse
         self.norm = norm
@@ -443,17 +542,31 @@ class WeightQuantizer(torch.nn.Module):
         else:
             self.maxq = torch.tensor(2**bits - 1)
 
-    def find_params(self, x):
+    def find_params(self, x, g=None):
         if self.bits == 16:
             return
         dev = x.device
         self.maxq = self.maxq.to(dev)
 
         shape = x.shape
+
         if self.perchannel:
             x = x.flatten(1)
+            g = g.flatten(1) if g is not None else None
         else:
             x = x.flatten().unsqueeze(0)
+            g = g.flatten().unsqueeze(0) if g is not None else None
+        
+        if self.nuq:
+            if self.perchannel:
+                luts = []
+                for i in range(x.shape[0]):
+                    gi = g[i] if g is not None else torch.ones_like(x[i])
+                    luts.append(non_uniform_lut(x[i], gi, self.bits, device=dev))
+                self.lut = torch.stack(luts, dim=0).to(dev)  # (out_channels, 2^bits)
+            else:
+                self.lut = non_uniform_lut(x, g, self.bits, device=dev).to(dev)  # (2^bits,)
+            return
 
         tmp = torch.zeros(x.shape[0], device=dev)
         xmin = torch.minimum(x.min(1)[0], tmp)
@@ -512,6 +625,8 @@ class WeightQuantizer(torch.nn.Module):
     def quantize(self, x):
         x_dtype = x.dtype
         if self.ready() and self.bits < 16:
+            if self.nuq:
+                return nu_quant_dequant(x, self.lut).to(x_dtype)
             if self.sym:
                 return sym_quant_dequant(x, self.scale, self.maxq).to(x_dtype)
             return asym_quant_dequant(x, self.scale, self.zero, self.maxq).to(x_dtype)
@@ -521,6 +636,8 @@ class WeightQuantizer(torch.nn.Module):
         return self.maxq > 0
 
     def ready(self):
+        if self.nuq:
+            return self.lut.numel() > 1
         return torch.all(self.scale != 0)
 
 
@@ -673,6 +790,120 @@ def find_qlayers(module, layers=[torch.nn.Linear, ActQuantWrapper], name=""):
             )
         )
     return res
+
+
+@torch.no_grad()
+def collect_weight_importance_from_dataset(
+    model,
+    dataset,
+    args,
+    dataset_name=None,
+    nsamples=None,
+):
+    """Estimate per-weight importance g from calibration data without GPTQ.
+
+    We use a diagonal Hessian approximation from input second moment:
+    for each weight column j, g_j \propto E[x_j^2].
+    """
+    if dataset is None:
+        return {}
+
+    if nsamples is None:
+        nsamples = getattr(args, "nsamples", 128)
+    if dataset_name is None:
+        dataset_name = getattr(args, "dataset_name", None)
+
+    stats = {}
+    handles = []
+
+    def _hook(module, inp, out):
+        if not hasattr(module, "weight") or module.weight is None:
+            return
+
+        x = inp[0].detach().float()
+        if isinstance(module, torch.nn.Linear):
+            x2d = x.reshape(-1, x.shape[-1])
+            sum_sq = (x2d * x2d).sum(dim=0).cpu()
+            count = x2d.shape[0]
+        elif isinstance(module, torch.nn.Conv2d):
+            padding = 0 if module.padding == "valid" else module.padding
+            x_unfold = F.unfold(
+                x,
+                kernel_size=module.kernel_size,
+                dilation=module.dilation,
+                padding=padding,
+                stride=module.stride,
+            )
+            x2d = x_unfold.transpose(1, 2).reshape(-1, x_unfold.shape[1])
+            sum_sq = (x2d * x2d).sum(dim=0).cpu()
+            count = x2d.shape[0]
+        else:
+            return
+
+        key = id(module)
+        if key not in stats:
+            stats[key] = {
+                "sum_sq": sum_sq,
+                "count": count,
+            }
+        else:
+            stats[key]["sum_sq"] += sum_sq
+            stats[key]["count"] += count
+
+    for _, module in model.named_modules():
+        if isinstance(module, (torch.nn.Linear, torch.nn.Conv2d)):
+            handles.append(module.register_forward_hook(_hook))
+
+    lt = len(dataset.data)
+    for i in tqdm(range(lt), desc="Collect NUQ g"):
+        if i >= nsamples:
+            break
+
+        if hasattr(model, "use_custom_prompt") and dataset_name is not None and model.use_custom_prompt(dataset_name):
+            struct = model.build_prompt(dataset.data.iloc[i], dataset=dataset_name)
+        else:
+            struct = dataset.build_prompt(dataset.data.iloc[i])
+
+        try:
+            if dataset_name is not None:
+                model.generate(message=struct, dataset=dataset_name)
+            else:
+                model.generate(message=struct)
+        except TypeError:
+            model.generate(message=struct)
+        except Exception:
+            continue
+
+    for h in handles:
+        h.remove()
+
+    g_cache = {}
+    for _, module in model.named_modules():
+        key = id(module)
+        if key not in stats:
+            continue
+        st = stats[key]
+        if st["count"] <= 0:
+            continue
+
+        diag = (st["sum_sq"] / max(st["count"], 1)).float().clamp(min=1e-12)
+        weight = module.weight.data
+        weight_2d = weight.reshape(weight.shape[0], -1)
+        if diag.numel() != weight_2d.shape[1]:
+            continue
+        g = diag.view(1, -1).expand(weight_2d.shape[0], -1).reshape_as(weight_2d)
+        g_cache[key] = g.cpu()
+
+    return g_cache
+
+
+def get_weight_importance_for_module(module, weight, g_cache=None):
+    if not g_cache:
+        return None
+    g = g_cache.get(id(module), None)
+    if g is None:
+        return None
+    return g.to(weight.device, dtype=weight.dtype).reshape_as(weight.reshape(weight.shape[0], -1))
 
 
 def model_open_calibrate(model, args):
@@ -1127,3 +1358,126 @@ def calib_qwen2vl_plus(model, args, dataset, calib_num):
     model_close_calibrate(model.model, args)
     print("Calibrate End...")
     model_quant(model.model, args)
+
+def non_uniform_lut(x, g, bit, device=None):
+    # Determine device
+    if device is None:
+        if isinstance(x, torch.Tensor):
+            device = x.device
+        else:
+            device = torch.device('cpu')
+
+    # Ensure inputs are torch tensors on device
+    if not isinstance(x, torch.Tensor):
+        x = torch.tensor(x).to(device).float()
+    else:
+        x = x.to(device).float()
+
+    if not isinstance(g, torch.Tensor):
+        g = torch.tensor(g).to(device).float()
+    else:
+        g = g.to(device).float()
+
+    centers = torch.linspace(x.min(), x.max(), steps=2**bit, device=device)
+    # 归一化grad
+    x = x.reshape(-1)
+    g = g.reshape(-1)
+    grad_difference = g.max() - g.min()
+    if grad_difference == 0:
+        grad_difference = g.max()
+        if grad_difference == 0:
+            grad_difference = torch.tensor(1.0, device=g.device)
+    g = g / grad_difference
+
+    # 确保centers有序，以便使用searchsorted加速
+    centers, _ = torch.sort(centers)
+
+    # 预计算加权梯度
+    wg = x * g
+
+    # 初始分配
+    if len(centers) > 1:
+        boundaries = (centers[:-1] + centers[1:]) / 2
+        labels = torch.bucketize(x, boundaries)
+    else:
+        labels = torch.zeros_like(x, dtype=torch.long)
+
+    # best_loss = (np.square(weights - centers[labels]) * grads).sum()
+    current_centers = centers[labels]
+    best_loss = (torch.square(x - current_centers) * g).sum()
+    best_centers = centers.clone()
+
+    eps = 1e-7
+    max_patience = 30
+    patience = max_patience
+
+    # 预计算范围用于扰动
+    w_min, w_max = x.min(), x.max()
+    perturb_scale = (w_max - w_min) / (len(centers) + 1e-6) * 0.01
+
+    while patience > 0:
+        # 1. 向量化更新中心点
+        denom = torch.bincount(labels, weights=g, minlength=len(centers))
+        num = torch.bincount(labels, weights=wg, minlength=len(centers))
+
+        active_mask = denom > 1e-10
+        dead_mask = ~active_mask
+        n_dead = torch.sum(dead_mask)
+
+        new_centers = centers.clone()
+        new_centers[active_mask] = num[active_mask] / denom[active_mask]
+
+        # 2. 逻辑改进：处理“死掉”的中心点 (Dead Centers)
+        # 如果某个聚类中心没有分配到权重，将其移动到Loss最大的聚类附近进行分裂
+        if n_dead > 0:
+            # 计算每个聚类的Loss贡献
+            current_centers = centers[labels]
+            sq_errors = torch.square(x - current_centers) * g
+            cluster_loss = torch.bincount(
+                labels, weights=sq_errors, minlength=len(centers))
+
+            # 找到Loss最大的活跃聚类作为分裂源
+            # 排除已经是死掉的聚类
+            cluster_loss[dead_mask] = -1.0
+            candidate_indices = torch.argsort(cluster_loss, descending=True)
+
+            dead_indices = torch.where(dead_mask)[0]
+
+            for i, dead_idx in enumerate(dead_indices):
+                # 循环使用高Loss的聚类进行分裂
+                target_idx = candidate_indices[i % len(candidate_indices)]
+
+                if cluster_loss[target_idx] <= eps:
+                    break  # 如果连最大的Loss都很小，就不分裂了
+
+                # 分裂策略：在目标中心点附近微扰
+                center_val = new_centers[target_idx]
+                new_centers[dead_idx] = center_val + perturb_scale
+                new_centers[target_idx] = center_val - perturb_scale
+
+        # 3. 保持有序 (对于1D分配很重要)
+        new_centers, _ = torch.sort(new_centers)
+
+        # 4. 快速分配新标签
+        if len(new_centers) > 1:
+            boundaries = (new_centers[:-1] + new_centers[1:]) / 2
+            new_labels = torch.bucketize(x, boundaries)
+        else:
+            new_labels = torch.zeros_like(x, dtype=torch.long)
+
+        # 5. 计算Loss并更新
+        current_new_centers = new_centers[new_labels]
+        loss = (torch.square(x - current_new_centers) * g).sum()
+
+        if loss < best_loss - eps:
+            best_loss = loss
+            best_centers = new_centers.clone()
+            patience = max_patience  # 重置patience
+            centers = new_centers
+            labels = new_labels
+        else:
+            patience -= 1
+            centers = new_centers
+            labels = new_labels
+
+    return best_centers.cpu()
