@@ -12,6 +12,23 @@ torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 
 
+def _apply_weight_outlier_mix_quant(module, weight, quantizer, g, args, layer_name=""):
+    if not getattr(args, "enable_wt_outlier", False):
+        return quantizer.quantize(weight)
+    return quant_utils.quantize_weight_with_outlier_channels(
+        weight,
+        quantizer,
+        ratio=args.outlier_ratio,
+        min_channels=args.outlier_min_channels,
+        metric=args.outlier_metric,
+        high_bits=args.wt_outlier_high_bits,
+        high_sym=not args.w_asym,
+        g=g,
+        log_enabled=getattr(args, "outlier_log", False),
+        layer_name=layer_name,
+    )
+
+
 def internvl_visual_clip_rtn(model, dev, args, g_cache=None):
     quantizers = dict()
     # visiual conv1
@@ -29,7 +46,14 @@ def internvl_visual_clip_rtn(model, dev, args, g_cache=None):
     )
     quantizer.find_params(W, g=g)
     model.vision_model.embeddings.patch_embedding.weight.module.data = (
-        quantizer.quantize(W).to(
+        _apply_weight_outlier_mix_quant(
+            model.vision_model.embeddings.patch_embedding.module,
+            W,
+            quantizer,
+            g,
+            args,
+            layer_name="vision_model.embeddings.patch_embedding",
+        ).to(
             model.vision_model.embeddings.patch_embedding.weight.module.dtype
         )
     )
@@ -58,7 +82,14 @@ def internvl_visual_clip_rtn(model, dev, args, g_cache=None):
             W = subset[name].weight.data
             g = quant_utils.get_weight_importance_for_module(subset[name], W, g_cache)
             quantizer.find_params(W, g=g)
-            subset[name].weight.data = quantizer.quantize(W).to(
+            subset[name].weight.data = _apply_weight_outlier_mix_quant(
+                subset[name],
+                W,
+                quantizer,
+                g,
+                args,
+                layer_name=f"vision_model.encoder.layers.{i}.{name}",
+            ).to(
                 next(iter(layer.parameters())).dtype
             )
             quantizers["model.vpm.encoder.layers.%d.%s" % (i, name)] = quantizer.cpu()
@@ -281,7 +312,14 @@ def internvl_visual_cross_attention_rtn(model, dev, args, g_cache=None):
         W = subset[name].weight.data
         g = quant_utils.get_weight_importance_for_module(subset[name], W, g_cache)
         quantizer.find_params(W, g=g)
-        subset[name].weight.data = quantizer.quantize(W).to(subset[name].weight.dtype)
+        subset[name].weight.data = _apply_weight_outlier_mix_quant(
+            subset[name],
+            W,
+            quantizer,
+            g,
+            args,
+            layer_name=f"mlp1.{name}",
+        ).to(subset[name].weight.dtype)
 
 
 def gptq_internvl_fwrd_visual_clip_cross_attention(
@@ -398,7 +436,14 @@ def internvl_llm_rtn(model, dev, args, quantizers, g_cache=None):
             W = subset[name].weight.data
             g = quant_utils.get_weight_importance_for_module(subset[name], W, g_cache)
             quantizer.find_params(W, g=g)
-            subset[name].weight.data = quantizer.quantize(W).to(
+            subset[name].weight.data = _apply_weight_outlier_mix_quant(
+                subset[name],
+                W,
+                quantizer,
+                g,
+                args,
+                layer_name=f"language_model.model.layers.{i}.{name}",
+            ).to(
                 next(iter(layer.parameters())).dtype
             )
             quantizers["model.llm.model.layers.%d.%s" % (i, name)] = quantizer.cpu()
@@ -553,6 +598,11 @@ def internvl_rtn_gptq_fwrd_plus(model, dataset, dev, dataset_name, args):
         or (args.quant_cross_attention and not args.visual_w_rtn)
         or (args.quant_llm and not args.llm_w_rtn)
     )
+    if getattr(args, "enable_wt_outlier", False) and uses_gptq_path:
+        raise ValueError(
+            "--enable_wt_outlier currently supports RTN-only weight quantization. "
+            "Please enable --visual_w_rtn/--llm_w_rtn for quantized modules or disable --enable_wt_outlier."
+        )
     if args.w_nuq and uses_gptq_path:
         raise ValueError(
             "--w_nuq currently supports RTN-only weight quantization. "

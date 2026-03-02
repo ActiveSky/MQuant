@@ -389,6 +389,14 @@ class ActQuantWrapper(torch.nn.Module):
         self.had_dim = 0
         self.fp32_had = False
         self.split = False
+        self.act_outlier = False
+        self.act_outlier_ratio = 0.0
+        self.act_outlier_metric = "absmax"
+        self.act_outlier_min_channels = 1
+        self.act_outlier_log = False
+        self.act_outlier_log_once = True
+        self._act_outlier_logged = False
+        self.outlier_layer_name = ""
 
     def extra_repr(self) -> str:
         str_ = f"Input Quantizer Bits: {self.quantizer.bits}"
@@ -422,6 +430,120 @@ class ActQuantWrapper(torch.nn.Module):
         self.L2.weight.data = self.module.weight.data[:, 1:]
         if self.module.bias is not None:
             self.L2.bias.data = self.module.bias.data
+
+    def configure_act_outlier(
+        self,
+        enable=False,
+        ratio=0.0,
+        metric="absmax",
+        min_channels=1,
+        log_enabled=False,
+        log_once=True,
+        layer_name="",
+    ):
+        self.act_outlier = enable
+        self.act_outlier_ratio = ratio
+        self.act_outlier_metric = metric
+        self.act_outlier_min_channels = min_channels
+        self.act_outlier_log = log_enabled
+        self.act_outlier_log_once = log_once
+        self._act_outlier_logged = False
+        self.outlier_layer_name = layer_name
+
+    def _get_act_interval_mode(self, x):
+        groupsize = getattr(self.quantizer, "groupsize", -1)
+        if self.quantizer.act_per_tensor:
+            return "per-tensor"
+        if groupsize > 0 and x.shape[-1] % groupsize == 0:
+            return "per-token-group"
+        return "per-token"
+
+    def _log_act_outlier_stats(self, x, outlier_mask):
+        if not self.act_outlier_log:
+            return
+        if self.act_outlier_log_once and self._act_outlier_logged:
+            return
+
+        layer_name = self.outlier_layer_name or self.module.__class__.__name__
+        mode = self._get_act_interval_mode(x)
+        if outlier_mask is None:
+            print(
+                f"[ActOutlier][{layer_name}] mode={mode} global_ratio=0.000000 interval_mean=0.000000 interval_min=0.000000 interval_max=0.000000"
+            )
+            self._act_outlier_logged = True
+            return
+
+        mask_f = outlier_mask.float()
+        groupsize = getattr(self.quantizer, "groupsize", -1)
+        if self.quantizer.act_per_tensor:
+            interval_ratios = mask_f.reshape(-1).mean().view(1)
+        elif groupsize > 0 and x.shape[-1] % groupsize == 0:
+            interval_ratios = mask_f.reshape(
+                *x.shape[:-1],
+                x.shape[-1] // groupsize,
+                groupsize,
+            ).mean(dim=-1).reshape(-1)
+        else:
+            interval_ratios = mask_f.reshape(-1, x.shape[-1]).mean(dim=-1)
+
+        print(
+            f"[ActOutlier][{layer_name}] mode={mode} global_ratio={mask_f.mean().item():.6f} "
+            f"interval_mean={interval_ratios.mean().item():.6f} "
+            f"interval_min={interval_ratios.min().item():.6f} "
+            f"interval_max={interval_ratios.max().item():.6f}"
+        )
+        self._act_outlier_logged = True
+
+    def _quantize_input(self, x, x_dtype):
+        if self.quantizer.static:
+            return self.quantizer(x)
+        if self.quantizer.bits < 16:
+            self.quantizer.find_params(x)
+            x = self.quantizer(x).to(x_dtype)
+            self.quantizer.free()
+        return x
+
+    def _get_outlier_k(self, interval_size):
+        if interval_size <= 1:
+            return 0
+        k = int(round(interval_size * self.act_outlier_ratio))
+        if self.act_outlier_ratio > 0:
+            k = max(k, self.act_outlier_min_channels)
+        return min(max(k, 0), interval_size - 1)
+
+    def _build_act_outlier_mask(self, x):
+        x_abs = x.detach().abs().float()
+        groupsize = getattr(self.quantizer, "groupsize", -1)
+
+        if self.quantizer.act_per_tensor:
+            k = self._get_outlier_k(x_abs.numel())
+            if k <= 0:
+                return None
+            mask = torch.zeros_like(x_abs, dtype=torch.bool)
+            topk_idx = torch.topk(x_abs.reshape(-1), k=k, largest=True).indices
+            mask.reshape(-1)[topk_idx] = True
+            return mask
+
+        if groupsize > 0:
+            if x_abs.shape[-1] % groupsize != 0:
+                return None
+            x_group = x_abs.reshape(*x_abs.shape[:-1], x_abs.shape[-1] // groupsize, groupsize)
+            k = self._get_outlier_k(groupsize)
+            if k <= 0:
+                return None
+            topk_idx = torch.topk(x_group, k=k, dim=-1, largest=True).indices
+            mask_group = torch.zeros_like(x_group, dtype=torch.bool)
+            mask_group.scatter_(-1, topk_idx, True)
+            return mask_group.reshape_as(x_abs)
+
+        k = self._get_outlier_k(x_abs.shape[-1])
+        if k <= 0:
+            return None
+        x_2d = x_abs.reshape(-1, x_abs.shape[-1])
+        topk_idx = torch.topk(x_2d, k=k, dim=-1, largest=True).indices
+        mask_2d = torch.zeros_like(x_2d, dtype=torch.bool)
+        mask_2d.scatter_(-1, topk_idx, True)
+        return mask_2d.reshape_as(x_abs)
 
     def forward(self, x):
         x_dtype = x.dtype
@@ -460,7 +582,30 @@ class ActQuantWrapper(torch.nn.Module):
                 x = x.to(x_dtype)
             x = x.reshape(init_shape)
 
-        if self.split:
+        if (
+            self.act_outlier
+            and isinstance(self.module, torch.nn.Linear)
+            and self.quantizer.bits < 16
+        ):
+            outlier_mask = self._build_act_outlier_mask(x)
+            self._log_act_outlier_stats(x, outlier_mask)
+            if outlier_mask is not None and torch.any(outlier_mask):
+                x_main = x.masked_fill(outlier_mask, 0)
+                x_main = self._quantize_input(x_main, x_dtype)
+                x_main = self.module(x_main).to(x_dtype)
+
+                x_outlier = torch.where(outlier_mask, x, torch.zeros_like(x))
+                x_outlier = torch.nn.functional.linear(
+                    x_outlier.float(),
+                    self.module.weight.float(),
+                    bias=None,
+                ).to(x_dtype)
+                x = x_main + x_outlier
+            else:
+                x = self._quantize_input(x, x_dtype)
+                x = self.module(x).to(x_dtype)
+
+        elif self.split:
             if self.quantizer.static:
                 x[..., 1:] = self.quantizer(x[..., 1:])
             elif self.quantizer.bits < 16:
@@ -904,6 +1049,191 @@ def get_weight_importance_for_module(module, weight, g_cache=None):
     if g is None:
         return None
     return g.to(weight.device, dtype=weight.dtype).reshape_as(weight.reshape(weight.shape[0], -1))
+
+
+def select_weight_outlier_mask(
+    weight,
+    ratio,
+    min_channels=1,
+    metric="absmax",
+    perchannel=True,
+):
+    if ratio <= 0:
+        return None
+    weight_2d = weight.reshape(weight.shape[0], -1)
+    if weight_2d.numel() <= 1:
+        return None
+
+    weight_abs = weight_2d.abs()
+    if perchannel:
+        interval_size = weight_2d.shape[1]
+        if interval_size <= 1:
+            return None
+        k = int(round(interval_size * ratio))
+        if ratio > 0:
+            k = max(k, min_channels)
+        k = min(max(k, 0), interval_size - 1)
+        if k <= 0:
+            return None
+        topk_idx = torch.topk(weight_abs, k=k, dim=-1, largest=True).indices
+        mask = torch.zeros_like(weight_abs, dtype=torch.bool)
+        mask.scatter_(-1, topk_idx, True)
+        return mask.reshape_as(weight)
+
+    interval_size = weight_abs.numel()
+    if interval_size <= 1:
+        return None
+    k = int(round(interval_size * ratio))
+    if ratio > 0:
+        k = max(k, min_channels)
+    k = min(max(k, 0), interval_size - 1)
+    if k <= 0:
+        return None
+    mask = torch.zeros_like(weight_abs, dtype=torch.bool)
+    topk_idx = torch.topk(weight_abs.reshape(-1), k=k, largest=True).indices
+    mask.reshape(-1)[topk_idx] = True
+    return mask.reshape_as(weight)
+
+
+def quantize_weight_with_outlier_channels(
+    weight,
+    quantizer,
+    ratio=0.0,
+    min_channels=1,
+    metric="absmax",
+    high_bits=16,
+    high_sym=True,
+    g=None,
+    log_enabled=False,
+    layer_name="",
+):
+    wq = quantizer.quantize(weight)
+
+    def _log_stats(mask):
+        if not log_enabled:
+            return
+        ln = layer_name if layer_name else "unnamed"
+        perchannel = getattr(quantizer, "perchannel", True)
+        if mask is None:
+            print(
+                f"[WeightOutlier][{ln}] mode={'per-channel' if perchannel else 'per-tensor'} "
+                f"global_ratio=0.000000 interval_mean=0.000000 interval_min=0.000000 interval_max=0.000000"
+            )
+            return
+        mask_f = mask.float()
+        if perchannel:
+            interval_ratios = mask_f.reshape(mask_f.shape[0], -1).mean(dim=-1)
+            mode = "per-channel"
+        else:
+            interval_ratios = mask_f.reshape(-1).mean().view(1)
+            mode = "per-tensor"
+        print(
+            f"[WeightOutlier][{ln}] mode={mode} global_ratio={mask_f.mean().item():.6f} "
+            f"interval_mean={interval_ratios.mean().item():.6f} "
+            f"interval_min={interval_ratios.min().item():.6f} "
+            f"interval_max={interval_ratios.max().item():.6f}"
+        )
+
+    if ratio <= 0:
+        _log_stats(None)
+        return wq
+    outlier_mask = select_weight_outlier_mask(
+        weight,
+        ratio=ratio,
+        min_channels=min_channels,
+        metric=metric,
+        perchannel=getattr(quantizer, "perchannel", True),
+    )
+    if outlier_mask is None or not torch.any(outlier_mask):
+        _log_stats(None)
+        return wq
+    _log_stats(outlier_mask)
+
+    if high_bits >= 16:
+        wq = torch.where(outlier_mask, weight, wq)
+        return wq
+
+    high_quantizer = WeightQuantizer()
+    high_quantizer.configure(
+        bits=high_bits,
+        perchannel=getattr(quantizer, "perchannel", True),
+        nuq=False,
+        sym=high_sym,
+        mse=False,
+    )
+    high_quantizer.find_params(weight, g=g)
+    wq_high = high_quantizer.quantize(weight)
+    wq = torch.where(outlier_mask, wq_high, wq)
+    return wq
+
+
+def configure_internvl_act_outlier(model, args):
+    if not getattr(args, "enable_act_outlier", False):
+        return
+
+    configured = 0
+    ratio = getattr(args, "outlier_ratio", 0.0)
+    metric = getattr(args, "outlier_metric", "absmax")
+    min_channels = getattr(args, "outlier_min_channels", 1)
+
+    if getattr(args, "quant_llm", False):
+        qlayers = find_qlayers(
+            model.model.language_model,
+            layers=[ActQuantWrapper],
+        )
+        for name in qlayers:
+            if "feed_forward.w2" not in name:
+                continue
+            qlayers[name].configure_act_outlier(
+                enable=True,
+                ratio=ratio,
+                metric=metric,
+                min_channels=min_channels,
+                log_enabled=getattr(args, "outlier_log", False),
+                log_once=True,
+                layer_name=name,
+            )
+            configured += 1
+
+    if getattr(args, "quant_visual_clip", False):
+        qlayers = find_qlayers(
+            model.model.vision_model,
+            layers=[ActQuantWrapper],
+        )
+        for name in qlayers:
+            if "mlp.fc2" not in name:
+                continue
+            qlayers[name].configure_act_outlier(
+                enable=True,
+                ratio=ratio,
+                metric=metric,
+                min_channels=min_channels,
+                log_enabled=getattr(args, "outlier_log", False),
+                log_once=True,
+                layer_name=name,
+            )
+            configured += 1
+
+    if getattr(args, "quant_cross_attention", False):
+        qlayers = find_qlayers(
+            model.model.mlp1,
+            layers=[ActQuantWrapper],
+        )
+        for name in qlayers:
+            qlayers[name].configure_act_outlier(
+                enable=True,
+                ratio=ratio,
+                metric=metric,
+                min_channels=min_channels,
+                log_enabled=getattr(args, "outlier_log", False),
+                log_once=True,
+                layer_name=name,
+            )
+            configured += 1
+
+    print(
+        f"[ActOutlier] enabled={args.enable_act_outlier}, ratio={ratio}, metric={metric}, configured_layers={configured}"
+    )
 
 
 def model_open_calibrate(model, args):

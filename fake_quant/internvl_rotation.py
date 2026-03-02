@@ -1,3 +1,5 @@
+from fake_quant import utils
+
 import torch
 import tqdm
 from fake_quant.rotation_utils import (

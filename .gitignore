@@ -2,3 +2,8 @@
 weights/
 output/
 log
+
+.vscode/
+
+
+fast-hadamard-transform/

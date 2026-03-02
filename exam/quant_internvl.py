@@ -73,6 +73,7 @@ def main(args):
             if args.rotate_visual_clip:
                 args.quant_visual_clip = True
         quant_utils.internvl_add_act_qaunt(model, args)
+        quant_utils.configure_internvl_act_outlier(model, args)
 
         if args.online_llm_hadamard and args.rotate_llm:
             print("adding online hadamard rotation")
@@ -304,6 +305,37 @@ if __name__ == "__main__":
         default=1.0,
         help="Clip ratio for activation quantization. new_max = max * clip_ratio",
     )
+    parser.add_argument(
+        "--enable_act_outlier",
+        action="store_true",
+        default=False,
+        help="Enable activation outlier extraction branch for selected layers",
+    )
+    parser.add_argument(
+        "--outlier_ratio",
+        type=float,
+        default=0.0,
+        help="Per-layer outlier ratio used by activation/weight outlier extraction",
+    )
+    parser.add_argument(
+        "--outlier_metric",
+        type=str,
+        default="absmax",
+        choices=["absmax", "mean_abs"],
+        help="Outlier scoring metric",
+    )
+    parser.add_argument(
+        "--outlier_min_channels",
+        type=int,
+        default=1,
+        help="Minimum selected outlier channels per layer",
+    )
+    parser.add_argument(
+        "--outlier_log",
+        action="store_true",
+        default=False,
+        help="Print per-layer and per-interval outlier ratio statistics",
+    )
 
     # Weight Quantization Arguments
     parser.add_argument(
@@ -335,6 +367,18 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="Non-uniform weight quantization (RTN-only; default: False)",
+    )
+    parser.add_argument(
+        "--enable_wt_outlier",
+        action="store_true",
+        default=False,
+        help="Enable weight outlier channel extraction (RTN-only)",
+    )
+    parser.add_argument(
+        "--wt_outlier_high_bits",
+        type=int,
+        default=16,
+        help="Bit-width for outlier weight channels (16 means keep FP weights)",
     )
     parser.add_argument(
         "--visual_w_rtn",
