@@ -40,21 +40,23 @@ def internvl_visual_clip_rtn(model, dev, args, g_cache=None):
         sym=not (args.w_asym),
         mse=args.visual_w_clip,
     )
-    W = model.vision_model.embeddings.patch_embedding.weight.module.data
+    patch_embedding = model.vision_model.embeddings.patch_embedding
+    patch_module = patch_embedding.module if hasattr(patch_embedding, "module") else patch_embedding
+    W = patch_module.weight.data
     g = quant_utils.get_weight_importance_for_module(
-        model.vision_model.embeddings.patch_embedding.module, W, g_cache
+        patch_module, W, g_cache
     )
     quantizer.find_params(W, g=g)
-    model.vision_model.embeddings.patch_embedding.weight.module.data = (
+    patch_module.weight.data = (
         _apply_weight_outlier_mix_quant(
-            model.vision_model.embeddings.patch_embedding.module,
+            patch_module,
             W,
             quantizer,
             g,
             args,
             layer_name="vision_model.embeddings.patch_embedding",
         ).to(
-            model.vision_model.embeddings.patch_embedding.weight.module.dtype
+            patch_module.weight.dtype
         )
     )
 

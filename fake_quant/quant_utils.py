@@ -771,6 +771,14 @@ class WeightQuantizer(torch.nn.Module):
         x_dtype = x.dtype
         if self.ready() and self.bits < 16:
             if self.nuq:
+                if self.perchannel:
+                    x_2d = x.reshape(x.shape[0], -1).to(self.lut.device)
+                    out_2d = torch.empty_like(x_2d)
+                    for i in range(x_2d.shape[0]):
+                        boundaries = (self.lut[i][:-1] + self.lut[i][1:]) / 2
+                        q = torch.bucketize(x_2d[i], boundaries)
+                        out_2d[i] = self.lut[i][q]
+                    return out_2d.reshape_as(x).to(x_dtype)
                 return nu_quant_dequant(x, self.lut).to(x_dtype)
             if self.sym:
                 return sym_quant_dequant(x, self.scale, self.maxq).to(x_dtype)
@@ -958,6 +966,13 @@ def collect_weight_importance_from_dataset(
     if dataset_name is None:
         dataset_name = getattr(args, "dataset_name", None)
 
+    module_root = model.model if hasattr(model, "model") else model
+    if not isinstance(module_root, torch.nn.Module):
+        raise TypeError(
+            "collect_weight_importance_from_dataset expects a torch.nn.Module "
+            "or an object exposing `.model` as torch.nn.Module."
+        )
+
     stats = {}
     handles = []
 
@@ -995,7 +1010,7 @@ def collect_weight_importance_from_dataset(
             stats[key]["sum_sq"] += sum_sq
             stats[key]["count"] += count
 
-    for _, module in model.named_modules():
+    for _, module in module_root.named_modules():
         if isinstance(module, (torch.nn.Linear, torch.nn.Conv2d)):
             handles.append(module.register_forward_hook(_hook))
 
@@ -1023,7 +1038,7 @@ def collect_weight_importance_from_dataset(
         h.remove()
 
     g_cache = {}
-    for _, module in model.named_modules():
+    for _, module in module_root.named_modules():
         key = id(module)
         if key not in stats:
             continue
