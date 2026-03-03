@@ -21,7 +21,7 @@ class NonUniformQuantizer(BaseQuantizer):
 
     def update_quantization_params(self, inputs, g=None, device=None, channel_wise=None):
         """Compute LUT with weighted Lloyd (g is squared loss from calibration)."""
-        from fake_quant.quant_utils import non_uniform_lut
+        from fake_quant.quant_utils import non_uniform_lut, non_uniform_lut_parallel
 
         if g is None:
             g = torch.ones_like(inputs)
@@ -34,12 +34,11 @@ class NonUniformQuantizer(BaseQuantizer):
         g_flat = self._flatten_per_channel(g)
 
         if channel_wise:
-            luts = []
-            for i in range(inputs_flat.shape[0]):
-                luts.append(
-                    non_uniform_lut(inputs_flat[i], g_flat[i], self.bit_type.bits, device=device)
-                )
-            self.lut = torch.stack(luts, dim=0).to(device)
+            xs_list = [inputs_flat[i] for i in range(inputs_flat.shape[0])]
+            gs_list = [g_flat[i] for i in range(g_flat.shape[0])]
+            self.lut = non_uniform_lut_parallel(
+                xs_list, gs_list, self.bit_type.bits, device=device
+            )
         else:
             self.lut = non_uniform_lut(
                 inputs_flat.reshape(-1), g_flat.reshape(-1), self.bit_type.bits, device=device
