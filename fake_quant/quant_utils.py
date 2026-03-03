@@ -796,7 +796,7 @@ class WeightQuantizer(torch.nn.Module):
 
 @torch.no_grad()
 def fuse_internvl(model):
-    print("fuse internvl vision model...")
+    print("==========1.fuse internvl vision model=======")
     for layer in model.model.vision_model.encoder.layers:
         # layer.ls1  # (out_c)
         # layer.attn.proj.weight  # shape is out_c, in_c

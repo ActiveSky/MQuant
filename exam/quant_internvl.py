@@ -67,16 +67,16 @@ def main(args):
 
     if args.quant:
         if args.online_llm_hadamard:
-            if args.rotate_llm:
+            if args.rotate_llm: #如果要在线旋转llm，那么就必须量化llm
                 args.quant_llm = True
         if args.online_visual_hadamard:
-            if args.rotate_visual_clip:
+            if args.rotate_visual_clip: #如果要在线旋转，那么就必须量化视觉部分
                 args.quant_visual_clip = True
         quant_utils.internvl_add_act_qaunt(model, args)
         quant_utils.configure_internvl_act_outlier(model, args)
 
-        if args.online_llm_hadamard and args.rotate_llm:
-            print("adding online hadamard rotation")
+        if args.online_llm_hadamard and args.rotate_llm: 
+            print("==========4.adding online hadamard rotation in llm========")
             qlayers = quant_utils.find_qlayers(
                 model.model.language_model, layers=[quant_utils.ActQuantWrapper]
             )
@@ -94,7 +94,7 @@ def main(args):
                         qlayers[name].split_weights()
 
         if args.online_visual_hadamard and args.rotate_visual_clip:
-            print("adding online hadamard rotation")
+            print("==========5.adding online hadamard rotation in visual clip========")
             qlayers = quant_utils.find_qlayers(
                 model.model.vision_model, layers=[quant_utils.ActQuantWrapper]
             )
@@ -113,10 +113,12 @@ def main(args):
 
         model.model.to(utils.DEV)
 
-        if args.load_gptq:
+        if args.load_gptq: #如果提供了gptq模型的路径，那么就直接加载这个模型，而不进行gptq的计算
             print("Loading GPTQ model from: ", args.load_gptq)
             model.model = torch.load(args.load_gptq)
         else:
+            
+            # 这里师兄在这里加了一个加载数据集的判断逻辑
             dataset = None
             need_dataset_for_gptq = (
                 (args.quant_visual_clip and not args.visual_w_rtn)
@@ -138,9 +140,9 @@ def main(args):
             gptq.internvl_rtn_gptq_fwrd_plus(
                 model, dataset, utils.DEV, args.dataset_name, args
             )
-            if args.dump_gptq:
+            if args.dump_gptq: #把量化后的模型保存到这个路径
                 torch.save(model.model, args.dump_gptq)
-                print("Dumped the GPTQ model to: ", args.dump_gptq)
+                print("=============Dumped the GPTQ model to: ", args.dump_gptq)
 
         if args.visual_a_bits < 16 or args.visual_static:
             if args.visual_static and args.visual_a_bits >= 16:
@@ -198,7 +200,7 @@ def main(args):
                     static=args.llm_static,
                     observer_type="minmax",
                 )
-
+    # 构造评测数据集 & 校准
     from vlmeval.dataset import build_dataset
 
     dataset = build_dataset(args.dataset_name)

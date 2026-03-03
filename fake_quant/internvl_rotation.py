@@ -161,7 +161,7 @@ def rotate_internvl_head(model, Q: torch.Tensor) -> None:
 
 
 def fuse_internvl_layer_norms(model, args):
-    print("fuse internvl layer norms")
+    print("============2.fuse internvl layer norms=============")
     if not args.no_fuse_visual_clip:
         # fuse internvl visual transformer layer norms
         bake_mean_into_conv(model.model.vision_model.embeddings.patch_embedding)
@@ -224,9 +224,10 @@ def fuse_internvl_layer_norms(model, args):
 
 @torch.inference_mode()
 def rotate_internvl2_model(model, args):
-    print("rotate model")
+    print("==============3.rotate model=============")
     if args.rotate_visual_clip:
         # rotate visual transformer
+        print("===============3.1 Rotating Visual Clip========= ")
         num_heads = model.config.vision_config.num_attention_heads
         head_dim = model.config.vision_config.hidden_size // num_heads
         Q_v = get_orthogonal_matrix(
@@ -275,10 +276,11 @@ def rotate_internvl2_model(model, args):
         utils.cleanup_memory()
 
     if args.rotate_visual_cross_attn:
-        print("\n Rotating Visual Cross Attention \n")
+        print("============3.2 Rotating Visual Cross Attention =======")
         pass
 
     if args.rotate_llm:
+        print("============3.3 Rotating LLM ==========")
         Q = get_orthogonal_matrix(model.config.llm_config.hidden_size, args.rotate_mode)
 
         config = model.config.llm_config
