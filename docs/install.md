@@ -5,7 +5,9 @@
 ### 1. create env
 
 ```shell
-conda env create -f environment.yml
+# conda env create -f environment.yml
+
+conda env create -f qwen2vl_environment.yml
 ```
 
 ### 2. hardmard transform
