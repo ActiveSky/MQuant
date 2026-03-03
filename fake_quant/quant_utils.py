@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 import torch.multiprocessing as mp
 import os
+import warnings
 from fake_quant import utils
 from fake_quant import hadamard_utils
 import fast_hadamard_transform
@@ -1834,8 +1835,10 @@ def non_uniform_lut(x, g, bit, device=None):
 
 def _non_uniform_lut_worker(args):
     """Worker function for multiprocessing non_uniform_lut computation."""
-    x, g, bit, device = args
-    return non_uniform_lut(x, g, bit, device=device)
+    x_np, g_np, bit = args
+    x = torch.from_numpy(x_np)
+    g = torch.from_numpy(g_np)
+    return non_uniform_lut(x, g, bit, device=torch.device("cpu"))
 
 
 def non_uniform_lut_parallel(xs, gs, bit, device=None, num_workers=None):
@@ -1860,29 +1863,65 @@ def non_uniform_lut_parallel(xs, gs, bit, device=None, num_workers=None):
     if n == 0:
         return torch.empty(0, 2 ** bit)
 
+    if gs is None:
+        gs = [torch.ones_like(xi) for xi in xs]
+
     if n == 1:
         return non_uniform_lut(xs[0], gs[0], bit, device=device).unsqueeze(0)
 
     if num_workers is None:
-        num_workers = min(n, os.cpu_count() or 4)
+        default_workers = min(n, max(1, (os.cpu_count() or 4) // 2), 8)
+        env_workers = os.getenv("MQUANT_LUT_WORKERS")
+        if env_workers is not None:
+            try:
+                num_workers = int(env_workers)
+            except ValueError:
+                num_workers = default_workers
+        else:
+            num_workers = default_workers
     num_workers = max(1, num_workers)
 
-    # Force CPU for multiprocessing workers to avoid CUDA fork issues
-    worker_device = torch.device('cpu')
-    work_args = [
-        (xs[i].cpu(), gs[i].cpu(), bit, worker_device) for i in range(n)
-    ]
+    if num_workers == 1:
+        target_device = device if device is not None else torch.device('cpu')
+        results = [
+            non_uniform_lut(xs[i], gs[i], bit, device=torch.device('cpu'))
+            for i in range(n)
+        ]
+        return torch.stack(results, dim=0).to(target_device)
+
+    def work_args_iter():
+        for i in range(n):
+            yield (
+                xs[i].detach().cpu().contiguous().numpy(),
+                gs[i].detach().cpu().contiguous().numpy(),
+                bit,
+            )
 
     from tqdm import tqdm
 
+    chunksize = max(1, n // (num_workers * 8))
     ctx = mp.get_context('spawn')
-    with ctx.Pool(processes=num_workers) as pool:
-        results = list(tqdm(
-            pool.imap(_non_uniform_lut_worker, work_args),
-            total=n,
-            desc="non_uniform_lut",
-            leave=False,
-        ))
+    try:
+        with ctx.Pool(processes=num_workers, maxtasksperchild=64) as pool:
+            results = list(tqdm(
+                pool.imap(_non_uniform_lut_worker, work_args_iter(), chunksize=chunksize),
+                total=n,
+                desc="non_uniform_lut",
+                leave=False,
+            ))
+    except OSError as e:
+        if e.errno == 24:
+            warnings.warn(
+                "Hit open-file limit in non_uniform_lut_parallel; falling back to serial computation. "
+                "You can also reduce workers via MQUANT_LUT_WORKERS.",
+                RuntimeWarning,
+            )
+            results = [
+                non_uniform_lut(xs[i], gs[i], bit, device=torch.device('cpu'))
+                for i in range(n)
+            ]
+        else:
+            raise
 
     target_device = device if device is not None else torch.device('cpu')
     return torch.stack(results, dim=0).to(target_device)
