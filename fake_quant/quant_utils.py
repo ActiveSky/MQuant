@@ -2,6 +2,7 @@ import math
 import transformers
 import torch
 import torch.nn.functional as F
+import torch.multiprocessing as mp
 import os
 from fake_quant import utils
 from fake_quant import hadamard_utils
@@ -280,32 +281,32 @@ class ActQuantizer(torch.nn.Module):
                     if g is not None
                     else None
                 )
-                luts = []
+                xs_list = []
+                gs_list = []
                 for i in range(reshaped_x.shape[0]):
                     for j in range(reshaped_x.shape[1]):
                         for k in range(reshaped_x.shape[2]):
-                            gi = (
+                            xs_list.append(reshaped_x[i, j, k].flatten())
+                            gs_list.append(
                                 reshaped_g[i, j, k].flatten()
                                 if reshaped_g is not None
                                 else torch.ones_like(reshaped_x[i, j, k].flatten())
                             )
-                            luts.append(
-                                non_uniform_lut(
-                                    reshaped_x[i, j, k].flatten(),
-                                    gi,
-                                    self.bits,
-                                    device=dev,
-                                )
-                            )
-                self.lut = torch.stack(luts, dim=0).to(dev)  # (num_groups, 2^bits)
+                self.lut = non_uniform_lut_parallel(
+                    xs_list, gs_list, self.bits, device=dev
+                )  # (num_groups, 2^bits)
             else:
                 # per-token: each token gets its own LUT
                 reshaped_x = x.reshape((-1, x.shape[-1]))
-                luts = []
-                for i in range(reshaped_x.shape[0]):
-                    gi = g.reshape(-1, g.shape[-1])[i] if g is not None else torch.ones_like(reshaped_x[i])
-                    luts.append(non_uniform_lut(reshaped_x[i], gi, self.bits, device=dev))
-                self.lut = torch.stack(luts, dim=0).to(dev)  # (num_tokens, 2^bits)
+                reshaped_g = g.reshape(-1, g.shape[-1]) if g is not None else None
+                xs_list = [reshaped_x[i] for i in range(reshaped_x.shape[0])]
+                gs_list = [
+                    reshaped_g[i] if reshaped_g is not None else torch.ones_like(reshaped_x[i])
+                    for i in range(reshaped_x.shape[0])
+                ]
+                self.lut = non_uniform_lut_parallel(
+                    xs_list, gs_list, self.bits, device=dev
+                )  # (num_tokens, 2^bits)
             return
         elif self.act_per_tensor:
             tmp = torch.tensor(0).to(x)
@@ -704,11 +705,14 @@ class WeightQuantizer(torch.nn.Module):
         
         if self.nuq:
             if self.perchannel:
-                luts = []
-                for i in range(x.shape[0]):
-                    gi = g[i] if g is not None else torch.ones_like(x[i])
-                    luts.append(non_uniform_lut(x[i], gi, self.bits, device=dev))
-                self.lut = torch.stack(luts, dim=0).to(dev)  # (out_channels, 2^bits)
+                xs_list = [x[i] for i in range(x.shape[0])]
+                gs_list = [
+                    g[i] if g is not None else torch.ones_like(x[i])
+                    for i in range(x.shape[0])
+                ]
+                self.lut = non_uniform_lut_parallel(
+                    xs_list, gs_list, self.bits, device=dev
+                )  # (out_channels, 2^bits)
             else:
                 self.lut = non_uniform_lut(x, g, self.bits, device=dev).to(dev)  # (2^bits,)
             return
@@ -1826,3 +1830,59 @@ def non_uniform_lut(x, g, bit, device=None):
             labels = new_labels
 
     return best_centers.cpu()
+
+
+def _non_uniform_lut_worker(args):
+    """Worker function for multiprocessing non_uniform_lut computation."""
+    x, g, bit, device = args
+    return non_uniform_lut(x, g, bit, device=device)
+
+
+def non_uniform_lut_parallel(xs, gs, bit, device=None, num_workers=None):
+    """Parallel version of non_uniform_lut using torch.multiprocessing.
+
+    Args:
+        xs: list of 1-D tensors or a 2-D tensor where each row is a channel.
+        gs: list of 1-D tensors or a 2-D tensor of gradients (same shape as xs).
+        bit: number of quantization bits.
+        device: target device for computation (each worker uses CPU).
+        num_workers: number of parallel workers (default: min(len(xs), cpu_count)).
+
+    Returns:
+        A stacked tensor of shape (N, 2^bit) containing all LUTs.
+    """
+    if isinstance(xs, torch.Tensor) and xs.dim() == 2:
+        xs = [xs[i] for i in range(xs.shape[0])]
+    if isinstance(gs, torch.Tensor) and gs.dim() == 2:
+        gs = [gs[i] for i in range(gs.shape[0])]
+
+    n = len(xs)
+    if n == 0:
+        return torch.empty(0, 2 ** bit)
+
+    if n == 1:
+        return non_uniform_lut(xs[0], gs[0], bit, device=device).unsqueeze(0)
+
+    if num_workers is None:
+        num_workers = min(n, os.cpu_count() or 4)
+    num_workers = max(1, num_workers)
+
+    # Force CPU for multiprocessing workers to avoid CUDA fork issues
+    worker_device = torch.device('cpu')
+    work_args = [
+        (xs[i].cpu(), gs[i].cpu(), bit, worker_device) for i in range(n)
+    ]
+
+    from tqdm import tqdm
+
+    ctx = mp.get_context('spawn')
+    with ctx.Pool(processes=num_workers) as pool:
+        results = list(tqdm(
+            pool.imap(_non_uniform_lut_worker, work_args),
+            total=n,
+            desc="non_uniform_lut",
+            leave=False,
+        ))
+
+    target_device = device if device is not None else torch.device('cpu')
+    return torch.stack(results, dim=0).to(target_device)
